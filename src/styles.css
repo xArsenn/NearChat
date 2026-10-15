@@ -47,7 +47,7 @@ button { color: inherit; }
 .privacy-card strong, .privacy-card span { display: block; }
 .privacy-card strong { font-size: 12px; }
 .privacy-card span { color: #71847b; margin-top: 5px; font-size: 10px; line-height: 1.55; }
-.identity { padding: 14px 6px 0; color: #56615c; font-size: 10px; }
+.identity { display: flex; justify-content: space-between; gap: 10px; padding: 14px 6px 0; color: #56615c; font-size: 10px; }
 .identity code { float: right; color: #718078; }
 
 .chat-panel { min-width: 0; height: 100vh; display: grid; grid-template-rows: 76px 1fr auto; }

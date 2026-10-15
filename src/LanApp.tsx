@@ -1,4 +1,5 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react'
+import packageInfo from '../package.json'
 import {
   CheckCircle2,
   Copy,
@@ -330,7 +331,7 @@ export default function LanApp() {
         </button>
         <button className={`update-button ${updateState}`} onClick={handleUpdate} disabled={updateState === 'checking' || updateState === 'downloading'}><DownloadCloud size={16} /><span>{updateLabel}</span></button>
         <div className="privacy-card"><ShieldCheck size={20} /><div><strong>消息与文件已加密</strong><span>内容使用房间口令派生的 AES-256 密钥加密，只在局域网设备间传输。</span></div></div>
-        <div className="identity">我的名称 <code>{displayName}</code></div>
+        <div className="identity"><span>v{packageInfo.version}</span><span>我的名称 <code>{displayName}</code></span></div>
       </aside>
 
       <section className="chat-panel">
