@@ -1,0 +1,21 @@
+appId: chat.nearchat.desktop
+productName: NearChat
+directories:
+  output: release
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+win:
+  target: nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  artifactName: NearChat-Setup-${version}.${ext}
+publish:
+  provider: github
+  owner: ${env.GH_OWNER}
+  repo: ${env.GH_REPO}
+  releaseType: release

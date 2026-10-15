@@ -1,0 +1,53 @@
+{
+  "name": "nearchat",
+  "private": true,
+  "version": "0.3.0",
+  "description": "无需账号与中心服务器的局域网点对点聊天工具",
+  "author": "NearChat contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xArsenn/NearChat.git"
+  },
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "desktop": "npm run build && electron .",
+    "package:win": "npm run build && electron-builder --win portable",
+    "package:release": "npm run build && electron-builder --win nsis --config electron-builder.release.yml"
+  },
+  "dependencies": {
+    "react": "latest",
+    "react-dom": "latest",
+    "lucide-react": "latest",
+    "ws": "latest",
+    "electron-updater": "latest"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/ws": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  },
+  "build": {
+    "appId": "chat.nearchat.desktop",
+    "productName": "NearChat",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable"
+    }
+  }
+}

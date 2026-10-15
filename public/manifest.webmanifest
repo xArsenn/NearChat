@@ -1,0 +1,12 @@
+{
+  "name": "NearChat",
+  "short_name": "NearChat",
+  "description": "无需账号与服务器的点对点聊天工具",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
