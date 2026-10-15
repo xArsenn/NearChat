@@ -1,15 +1,18 @@
-import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react'
+import { ChangeEvent, DragEvent, FormEvent, useEffect, useRef, useState } from 'react'
 import packageInfo from '../package.json'
 import QRCode from 'qrcode'
 import { getText, Language } from './i18n'
 import {
   CheckCircle2,
+  Clipboard,
+  ClipboardPaste,
   Copy,
   Download,
   DownloadCloud,
   FileUp,
   Fingerprint,
   FolderOpen,
+  Images,
   Link2,
   LoaderCircle,
   LockKeyhole,
@@ -32,7 +35,7 @@ import {
 
 type ChatItem = {
   id: string
-  kind: 'chat' | 'file' | 'system'
+  kind: 'chat' | 'file' | 'clipboard' | 'system'
   side: 'me' | 'peer' | 'system'
   sender: string
   senderId?: string
@@ -48,6 +51,7 @@ type ChatItem = {
 
 type WirePacket =
   | { kind: 'chat'; id: string; sender: string; senderId?: string; text: string; createdAt: number }
+  | { kind: 'clipboard'; id: string; sender: string; senderId?: string; text: string; createdAt: number }
   | { kind: 'file-meta'; id: string; sender: string; senderId?: string; name: string; size: number; mime: string; chunks: number; hash?: string; createdAt: number }
   | { kind: 'file-chunk'; id: string; index: number; data: string }
   | { kind: 'file-ack'; id: string; senderId: string; ok: boolean }
@@ -199,7 +203,9 @@ export default function LanApp() {
   const [role, setRole] = useState<'host' | 'guest' | null>(null)
   const [room, setRoom] = useState<LanRoom | null>(null)
   const [peers, setPeers] = useState(1)
-  const [modal, setModal] = useState<'closed' | 'menu' | 'created' | 'join' | 'remark'>('closed')
+  const [modal, setModal] = useState<'closed' | 'menu' | 'created' | 'join' | 'remark' | 'clipboard' | 'inbox'>('closed')
+  const [clipboardDraft, setClipboardDraft] = useState('')
+  const [dragging, setDragging] = useState(false)
   const [roomName, setRoomName] = useState(getText(language, 'temporaryRoom'))
   const [nearby, setNearby] = useState<LanRoom[]>([])
   const [selectedRoom, setSelectedRoom] = useState<LanRoom | null>(null)
@@ -274,8 +280,8 @@ export default function LanApp() {
   }, [room])
 
   async function receivePacket(packet: WirePacket) {
-    if (packet.kind === 'chat') {
-      setMessages((items) => [...items, { ...packet, kind: 'chat', side: 'peer' }])
+    if (packet.kind === 'chat' || packet.kind === 'clipboard') {
+      setMessages((items) => [...items, { ...packet, side: 'peer' }])
       return
     }
     if (packet.kind === 'file-ack') {
@@ -410,6 +416,10 @@ export default function LanApp() {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file || !connected) return
+    await queueFile(file)
+  }
+
+  async function queueFile(file: File) {
     if (file.size > 50 * 1024 * 1024) {
       setNotice(t('fileTooLarge'))
       return
@@ -417,6 +427,53 @@ export default function LanApp() {
     const transferId = id()
     outgoingRef.current.set(transferId, file)
     await transmitFile(file, transferId, Date.now())
+  }
+
+  async function handleDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault()
+    setDragging(false)
+    if (!connected) return
+    const files = Array.from(event.dataTransfer.files)
+    for (const file of files.slice(0, 20)) await queueFile(file)
+  }
+
+  async function openClipboard() {
+    setNotice('')
+    try {
+      const content = await api.readClipboard()
+      setClipboardDraft(content.text || '')
+    } catch {
+      setClipboardDraft('')
+    }
+    setModal('clipboard')
+  }
+
+  async function sendClipboardText() {
+    const text = clipboardDraft.trim()
+    if (!text || !connected) return
+    const packet: WirePacket = { kind: 'clipboard', id: id(), sender: displayName, senderId: deviceId, text: text.slice(0, 100_000), createdAt: Date.now() }
+    try {
+      await sendWire(packet)
+      setMessages((items) => [...items, { ...packet, side: 'me' }])
+      setModal('closed')
+      setNotice(t('clipboardSent'))
+    } catch (error) { setNotice(error instanceof Error ? error.message : t('sendFailed')) }
+  }
+
+  async function sendClipboardImage() {
+    if (!connected) return
+    try {
+      const content = await api.readClipboard()
+      if (!content.imageDataUrl) throw new Error(t('clipboardNoImage'))
+      const blob = await (await fetch(content.imageDataUrl)).blob()
+      await queueFile(new File([blob], `NearChat-${new Date().toISOString().replace(/[:.]/g, '-')}.png`, { type: 'image/png' }))
+      setModal('closed')
+    } catch (error) { setNotice(error instanceof Error ? error.message : t('clipboardReadFailed')) }
+  }
+
+  async function copySharedText(text = '') {
+    await api.writeClipboardText(text)
+    setNotice(t('copiedToClipboard'))
   }
 
   async function transmitFile(file: File, transferId: string, createdAt: number) {
@@ -579,11 +636,13 @@ export default function LanApp() {
         <div className="identity"><span>v{packageInfo.version}</span><span>{t('myName')} <code>{displayName}</code></span></div>
       </aside>
 
-      <section className="chat-panel">
+      <section className={`chat-panel ${dragging ? 'is-dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); if (connected) setDragging(true) }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false) }} onDrop={handleDrop}>
         <header className="chat-header">
           <div className="avatar large"><Radio size={21} /></div>
           <div className="header-copy"><strong>{room?.name || t('hostFallback')}</strong><span><Users size={12} /> {connected ? t('onlineDevices', { count: peers, address: `${room?.address}:${room?.port}` }) : t('notConnected')}</span></div>
           <button className="language-switch" title={t('languageTitle')} onClick={() => setLanguage((value) => value === 'zh' ? 'en' : 'zh')}>{t('languageName')}</button>
+          {connected && <button className="icon-button tool-button" title={t('sharedClipboard')} onClick={openClipboard}><ClipboardPaste size={18} /></button>}
+          {connected && <button className="icon-button tool-button" title={t('fileInbox')} onClick={() => { setNotice(''); setModal('inbox') }}><FolderOpen size={18} /></button>}
           {connected && role === 'host' && <button className="icon-button invite-button" title={t('showQr')} onClick={() => setModal('created')}><QrCode size={18} /></button>}
           {connected ? <button className="icon-button danger" title={t('disconnect')} onClick={disconnect}><Unplug size={18} /></button> : <button className="connect-button" onClick={() => setModal('menu')}><Link2 size={17} /> {t('connectDevice')}</button>}
         </header>
@@ -595,7 +654,7 @@ export default function LanApp() {
           {messages.map((item) => item.kind === 'system' ? null : (
             <div className={`message-row ${item.side}`} key={item.id}>
               <div className={`bubble ${item.kind === 'file' ? 'file-bubble' : ''}`}>
-                {item.kind === 'chat' ? <p>{item.text}</p> : <div className={`file-card ${item.status || ''}`}><FileUp size={23} /><div><strong>{item.name}</strong><span>{formatSize(item.size)} · {fileStatus(item, language)}</span><div className="file-progress"><i style={{ width: `${item.progress || 0}%` }} /></div></div>{item.url ? <a href={item.url} download={item.name} title={t('saveFile')}><Download size={18} /></a> : item.side === 'me' && item.status === 'failed' ? <button onClick={() => retryFile(item.id)} title={t('retry')}><RotateCcw size={17} /></button> : null}</div>}
+                {item.kind === 'chat' ? <p>{item.text}</p> : item.kind === 'clipboard' ? <div className="clipboard-card"><Clipboard size={18} /><p>{item.text}</p><button title={t('copy')} onClick={() => copySharedText(item.text)}><Copy size={15} /></button></div> : <div className={`file-card ${item.status || ''}`}><FileUp size={23} /><div><strong>{item.name}</strong><span>{formatSize(item.size)} · {fileStatus(item, language)}</span><div className="file-progress"><i style={{ width: `${item.progress || 0}%` }} /></div></div>{item.url ? <a href={item.url} download={item.name} title={t('saveFile')}><Download size={18} /></a> : item.side === 'me' && item.status === 'failed' ? <button onClick={() => retryFile(item.id)} title={t('retry')}><RotateCcw size={17} /></button> : null}</div>}
                 <time><strong>{displaySender(item.sender, item.senderId)}</strong> · {new Date(item.createdAt).toLocaleTimeString(language === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</time>
               </div>
             </div>
@@ -609,6 +668,7 @@ export default function LanApp() {
           <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={connected ? t('messagePlaceholder') : t('joinToMessage')} disabled={!connected} />
           <button disabled={!draft.trim() || !connected} aria-label={t('send')}><Send size={19} /></button>
         </form>
+        {dragging && <div className="drop-overlay"><FileUp size={35} /><strong>{t('dropFiles')}</strong><span>{t('dropFilesHint')}</span></div>}
       </section>
 
       {modal !== 'closed' && (
@@ -650,6 +710,17 @@ export default function LanApp() {
               <button className="primary wide" onClick={saveRemark}><Pencil size={16} /> {t('saveRemark')}</button>
               <button className="secondary wide" onClick={() => toggleTrust(remarkMember)}><ShieldCheck size={16} /> {trustedIds.includes(remarkMember.id) ? t('cancelTrust') : t('trustDevice')}</button>
               {remarks[remarkMember.id] && <button className="text-button remove-remark" onClick={removeRemark}>{t('removeRemark')}</button>}
+            </>}
+            {modal === 'clipboard' && <>
+              <div className="modal-icon"><ClipboardPaste size={23} /></div><h2>{t('sharedClipboard')}</h2><p className="modal-intro">{t('clipboardIntro')}</p>
+              <label>{t('clipboardText')}</label><textarea className="clipboard-editor" maxLength={100000} placeholder={t('clipboardPlaceholder')} value={clipboardDraft} onChange={(event) => setClipboardDraft(event.target.value)} />
+              <button className="primary wide" disabled={!connected || !clipboardDraft.trim()} onClick={sendClipboardText}><Clipboard size={16} /> {t('sendClipboardText')}</button>
+              <button className="secondary wide" disabled={!connected} onClick={sendClipboardImage}><Images size={16} /> {t('sendClipboardImage')}</button>
+              <p className="privacy-note"><LockKeyhole size={13} /> {t('clipboardPrivacy')}</p>
+            </>}
+            {modal === 'inbox' && <>
+              <div className="modal-icon"><FolderOpen size={23} /></div><h2>{t('fileInbox')}</h2><p className="modal-intro">{t('fileInboxIntro')}</p>
+              <div className="inbox-list">{messages.filter((item) => item.kind === 'file').length ? messages.filter((item) => item.kind === 'file').slice().reverse().map((item) => <div className="inbox-item" key={item.id}><FileUp size={18} /><div><strong>{item.name}</strong><span>{displaySender(item.sender, item.senderId)} · {formatSize(item.size)} · {fileStatus(item, language)}</span></div>{item.url ? <a href={item.url} download={item.name} title={t('saveFile')}><Download size={17} /></a> : <span className={`inbox-state ${item.status || ''}`} />}</div>) : <div className="inbox-empty">{t('fileInboxEmpty')}</div>}</div>
             </>}
             {notice && <div className="notice">{notice}</div>}
           </section>

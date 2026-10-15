@@ -35,6 +35,8 @@ interface Window {
     joinRoom(target: LanRoom & { code: string; device: LanDevice; locale?: 'zh' | 'en' }): Promise<LanRoom>
     send(payload: string): Promise<boolean>
     stop(): Promise<boolean>
+    readClipboard(): Promise<{ text: string; imageDataUrl: string }>
+    writeClipboardText(text: string): Promise<boolean>
     onEvent(callback: (event: LanEvent) => void): () => void
     checkForUpdates(): Promise<boolean>
     downloadUpdate(): Promise<boolean>

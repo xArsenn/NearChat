@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('nearChat', {
   joinRoom: (target) => ipcRenderer.invoke('lan:join-room', target),
   send: (payload) => ipcRenderer.invoke('lan:send', payload),
   stop: () => ipcRenderer.invoke('lan:stop'),
+  readClipboard: () => ipcRenderer.invoke('clipboard:read'),
+  writeClipboardText: (text) => ipcRenderer.invoke('clipboard:write-text', text),
   onEvent: (callback) => {
     const listener = (_event, data) => callback(data)
     ipcRenderer.on('lan:event', listener)

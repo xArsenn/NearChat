@@ -11,8 +11,8 @@ type Incoming = Packet & { parts: Map<number, Uint8Array>; state: HTMLElement; c
 const params = new URLSearchParams(location.search)
 const config = { roomId: params.get('roomId') || '', code: (params.get('code') || '').toUpperCase(), roomName: params.get('name') || 'NearChat Room' }
 const words = {
-  zh: { connecting: '等待加入', connected: '已安全连接', disconnected: '连接已断开', title: '手机免安装加入', intro: '消息和文件只在当前局域网内加密传输，不会上传到 NearChat 云端。', name: '你的名称', nameValue: '手机访客', join: '加入房间', joining: '正在连接…', invalid: '邀请无效，请让房主重新生成二维码。', failed: '连接失败，请确认手机与电脑连接同一个 Wi-Fi。', placeholder: '输入消息…', send: '发送', tooLarge: '单个文件不能超过 50 MB', verify: '正在接收', ready: '点击下载', corrupt: '文件校验失败' },
-  en: { connecting: 'Ready to join', connected: 'Securely connected', disconnected: 'Disconnected', title: 'Join without installing', intro: 'Messages and files are encrypted and stay on this local network. Nothing is uploaded to NearChat.', name: 'Your name', nameValue: 'Mobile guest', join: 'Join room', joining: 'Connecting…', invalid: 'This invite is invalid. Ask the host to create a new QR code.', failed: 'Could not connect. Make sure the phone and computer use the same Wi-Fi.', placeholder: 'Type a message…', send: 'Send', tooLarge: 'Files must be 50 MB or smaller', verify: 'Receiving', ready: 'Download', corrupt: 'File verification failed' },
+  zh: { connecting: '等待加入', connected: '已安全连接', disconnected: '连接已断开', title: '手机免安装加入', intro: '消息和文件只在当前局域网内加密传输，不会上传到 NearChat 云端。', name: '你的名称', nameValue: '手机访客', join: '加入房间', joining: '正在连接…', invalid: '邀请无效，请让房主重新生成二维码。', failed: '连接失败，请确认手机与电脑连接同一个 Wi-Fi。', placeholder: '输入消息…', send: '发送', tooLarge: '单个文件不能超过 50 MB', verify: '正在接收', ready: '点击下载', corrupt: '文件校验失败', clipboard: '共享剪贴板', copy: '复制', copied: '已复制' },
+  en: { connecting: 'Ready to join', connected: 'Securely connected', disconnected: 'Disconnected', title: 'Join without installing', intro: 'Messages and files are encrypted and stay on this local network. Nothing is uploaded to NearChat.', name: 'Your name', nameValue: 'Mobile guest', join: 'Join room', joining: 'Connecting…', invalid: 'This invite is invalid. Ask the host to create a new QR code.', failed: 'Could not connect. Make sure the phone and computer use the same Wi-Fi.', placeholder: 'Type a message…', send: 'Send', tooLarge: 'Files must be 50 MB or smaller', verify: 'Receiving', ready: 'Download', corrupt: 'File verification failed', clipboard: 'Shared clipboard', copy: 'Copy', copied: 'Copied' },
 }
 
 let locale: Locale = localStorage.getItem('nearchat.web.locale') === 'en' || (!localStorage.getItem('nearchat.web.locale') && !navigator.language.toLowerCase().startsWith('zh')) ? 'en' : 'zh'
@@ -25,6 +25,23 @@ const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const text = () => words[locale]
+
+async function copyText(value: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value)
+      return
+    }
+  } catch { /* Insecure LAN pages use the selection fallback below. */ }
+  const area = document.createElement('textarea')
+  area.value = value
+  area.style.position = 'fixed'
+  area.style.opacity = '0'
+  document.body.append(area)
+  area.select()
+  document.execCommand('copy')
+  area.remove()
+}
 
 function renderLanguage() {
   document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
@@ -87,9 +104,23 @@ function addMessage(packet: Packet, mine = false) {
   bubble.className = 'bubble'
   const body = document.createElement('p')
   body.textContent = packet.text || ''
+  if (packet.kind === 'clipboard') {
+    bubble.classList.add('clipboard')
+    const label = document.createElement('strong')
+    label.textContent = `⌘ ${text().clipboard}`
+    const copy = document.createElement('button')
+    copy.textContent = text().copy
+    copy.onclick = async () => {
+      await copyText(packet.text || '')
+      copy.textContent = text().copied
+    }
+    bubble.append(label, body, copy)
+  } else {
+    bubble.append(body)
+  }
   const meta = document.createElement('small')
   meta.textContent = `${packet.sender || ''} · ${new Date(packet.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-  bubble.append(body, meta)
+  bubble.append(meta)
   row.append(bubble)
   $('messages').append(row)
   row.scrollIntoView({ behavior: 'smooth' })
@@ -119,7 +150,7 @@ function addFile(packet: Packet) {
 }
 
 async function receive(packet: Packet) {
-  if (packet.kind === 'chat') {
+  if (packet.kind === 'chat' || packet.kind === 'clipboard') {
     addMessage(packet)
     return
   }

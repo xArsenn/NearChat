@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, clipboard, ipcMain, shell } = require('electron')
 const path = require('path')
 const os = require('os')
 const crypto = require('crypto')
@@ -74,6 +74,24 @@ autoUpdater.on('update-not-available', (info) => emitUpdate('current', { version
 autoUpdater.on('download-progress', (progress) => emitUpdate('downloading', { percent: Math.round(progress.percent) }))
 autoUpdater.on('update-downloaded', (info) => emitUpdate('downloaded', { version: info.version }))
 autoUpdater.on('error', (error) => emitUpdate('error', { message: error.message }))
+
+ipcMain.handle('clipboard:read', async () => {
+  const text = (await clipboard.readText()).slice(0, 100_000)
+  let imageDataUrl = ''
+  for (const item of await clipboard.read()) {
+    const imageType = item.types.find((type) => type.startsWith('image/'))
+    if (!imageType) continue
+    const blob = await item.getType(imageType)
+    imageDataUrl = `data:${imageType};base64,${Buffer.from(await blob.arrayBuffer()).toString('base64')}`
+    break
+  }
+  return { text, imageDataUrl }
+})
+
+ipcMain.handle('clipboard:write-text', async (_event, text) => {
+  await clipboard.writeText(String(text || '').slice(0, 100_000))
+  return true
+})
 
 ipcMain.handle('update:check', async () => {
   if (!app.isPackaged) {

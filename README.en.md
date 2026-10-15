@@ -17,6 +17,9 @@ The computer that creates a room temporarily acts as the host on the local netwo
 - Multi-user local chat and a live member list
 - Device fingerprints and local trusted-device labels
 - Private local names shown on member entries, messages, and files
+- Encrypted shared clipboard for text and clipboard images, with one-click copy
+- Drag files into the chat to send up to 20 at a time
+- A file inbox with sender names, verification status, and save actions
 - Direct file transfers up to 50 MB
 - Live progress, retry, saving, and SHA-256 integrity verification
 - AES-256-GCM application-layer encryption
@@ -28,8 +31,11 @@ The computer that creates a room temporarily acts as the host on the local netwo
 2. Open NearChat on one computer and create a room.
 3. On another computer, scan for nearby rooms, select the room, and enter its code.
 4. On a phone, scan the QR code shown by the host, enter a display name, and join in the browser.
-5. If discovery is blocked, read a one-tap invite. Use the advanced address and port fields only as a fallback.
-6. When Windows asks for network access, allow NearChat on private networks.
+5. Use the clipboard button to send text or a screenshot, or drag files directly into the chat.
+6. If discovery is blocked, read a one-tap invite. Use the advanced address and port fields only as a fallback.
+7. When Windows asks for network access, allow NearChat on private networks.
+
+The shared clipboard is read only after a user clicks. NearChat never syncs passwords, verification codes, or other clipboard content in the background.
 
 ## Local development
 
