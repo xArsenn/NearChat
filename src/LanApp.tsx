@@ -168,6 +168,10 @@ export default function LanApp() {
   const outgoingRef = useRef(new Map<string, File>())
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const addressInputRef = useRef<HTMLInputElement | null>(null)
+  const portInputRef = useRef<HTMLInputElement | null>(null)
+  const roomIdInputRef = useRef<HTMLInputElement | null>(null)
+  const codeInputRef = useRef<HTMLInputElement | null>(null)
   const [displayName, setDisplayName] = useState(localStorage.getItem(PROFILE_KEY) || `设备-${Math.floor(1000 + Math.random() * 9000)}`)
   const [deviceId] = useState(persistentDeviceId)
   const [trustedIds, setTrustedIds] = useState<string[]>(loadTrustedIds)
@@ -186,6 +190,7 @@ export default function LanApp() {
   const [manualAddress, setManualAddress] = useState('')
   const [manualPort, setManualPort] = useState('')
   const [manualRoomId, setManualRoomId] = useState('')
+  const [joinAttempted, setJoinAttempted] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'current' | 'downloading' | 'downloaded' | 'error'>('idle')
@@ -319,8 +324,19 @@ export default function LanApp() {
       address: manualAddress.trim(),
       port: Number(manualPort),
     }
-    if (!target.roomId || !target.address || !target.port || code.trim().length < 6) {
-      setNotice('请填写房间地址、端口、房间 ID 和口令')
+    const missing: string[] = []
+    const invalidPort = !Number.isInteger(target.port) || target.port < 1 || target.port > 65535
+    if (!target.address) missing.push('主机地址')
+    if (invalidPort) missing.push('端口')
+    if (!target.roomId) missing.push('房间 ID')
+    if (code.trim().length < 6) missing.push('房间口令')
+    if (missing.length) {
+      setJoinAttempted(true)
+      setNotice(`还需要填写：${missing.join('、')}。输入框里的灰色文字只是提示，不是实际内容。`)
+      if (!target.address) addressInputRef.current?.focus()
+      else if (invalidPort) portInputRef.current?.focus()
+      else if (!target.roomId) roomIdInputRef.current?.focus()
+      else codeInputRef.current?.focus()
       return
     }
     setBusy(true)
@@ -333,6 +349,7 @@ export default function LanApp() {
       setRole('guest')
       setConnected(true)
       setModal('closed')
+      setJoinAttempted(false)
       setNotice('已加入局域网房间')
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '加入房间失败')
@@ -429,8 +446,19 @@ export default function LanApp() {
   function openJoin(roomItem?: LanRoom) {
     setSelectedRoom(roomItem || null)
     setCode('')
+    setJoinAttempted(false)
     setModal('join')
     setNotice('')
+  }
+
+  function changeManualAddress(value: string) {
+    const combined = value.trim().match(/^([^\s:]+):(\d{1,5})$/)
+    if (combined) {
+      setManualAddress(combined[1])
+      setManualPort(combined[2])
+      return
+    }
+    setManualAddress(value)
   }
 
   async function handleUpdate() {
@@ -533,9 +561,9 @@ export default function LanApp() {
             {modal === 'join' && <>
               <div className="modal-icon"><Link2 size={24} /></div><h2>加入房间</h2><p className="modal-intro">{selectedRoom ? `正在加入“${selectedRoom.name}”` : '填写创建者界面上显示的连接信息。'}</p>
               <label>我的名称</label><input className="modal-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-              {!selectedRoom && <div className="input-grid"><div><label>主机地址</label><input className="modal-input" placeholder="192.168.1.20" value={manualAddress} onChange={(event) => setManualAddress(event.target.value)} /></div><div><label>端口</label><input className="modal-input" placeholder="45678" value={manualPort} onChange={(event) => setManualPort(event.target.value)} /></div></div>}
-              {!selectedRoom && <><label>房间 ID</label><input className="modal-input mono" value={manualRoomId} onChange={(event) => setManualRoomId(event.target.value)} /></>}
-              <label>房间口令</label><input className="modal-input code-input" maxLength={8} placeholder="8 位口令" value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} />
+              {!selectedRoom && <><div className="input-grid"><div><label>主机地址 <em>必填</em></label><input ref={addressInputRef} className={`modal-input ${joinAttempted && !manualAddress.trim() ? 'invalid' : ''}`} aria-invalid={joinAttempted && !manualAddress.trim()} placeholder="请输入房主显示的地址" value={manualAddress} onChange={(event) => changeManualAddress(event.target.value)} /></div><div><label>端口 <em>必填</em></label><input ref={portInputRef} className={`modal-input ${joinAttempted && (!Number.isInteger(Number(manualPort)) || Number(manualPort) < 1 || Number(manualPort) > 65535) ? 'invalid' : ''}`} aria-invalid={joinAttempted && (!Number.isInteger(Number(manualPort)) || Number(manualPort) < 1 || Number(manualPort) > 65535)} inputMode="numeric" placeholder="请输入端口" value={manualPort} onChange={(event) => setManualPort(event.target.value.replace(/\D/g, '').slice(0, 5))} /></div></div><p className="field-help">可以直接在地址框粘贴完整地址，例如 192.168.1.20:45678，端口会自动填入。</p></>}
+              {!selectedRoom && <><label>房间 ID <em>必填</em></label><input ref={roomIdInputRef} className={`modal-input mono ${joinAttempted && !manualRoomId.trim() ? 'invalid' : ''}`} aria-invalid={joinAttempted && !manualRoomId.trim()} placeholder="请输入房主显示的房间 ID" value={manualRoomId} onChange={(event) => setManualRoomId(event.target.value.trim())} /></>}
+              <label>房间口令 <em>必填</em></label><input ref={codeInputRef} className={`modal-input code-input ${joinAttempted && code.trim().length < 6 ? 'invalid' : ''}`} aria-invalid={joinAttempted && code.trim().length < 6} maxLength={8} placeholder="请输入 8 位口令" value={code} onChange={(event) => setCode(event.target.value.toUpperCase().replace(/[^A-Z2-9]/g, ''))} />
               <button className="primary wide" disabled={busy} onClick={joinRoom}>{busy ? <LoaderCircle className="spin" size={17} /> : <Link2 size={17} />} 加入房间</button>
             </>}
             {notice && <div className="notice">{notice}</div>}

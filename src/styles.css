@@ -117,6 +117,7 @@ button { color: inherit; }
 .pair-modal h2 { margin: 18px 0 7px; font-size: 21px; letter-spacing: -.35px; }
 .modal-intro { margin: 0 0 21px; color: var(--muted); font-size: 12px; line-height: 1.65; }
 .pair-modal label { display: block; margin: 18px 0 7px; color: #a5afaa; font-size: 11px; font-weight: 600; }
+.pair-modal label em { margin-left: 4px; color: #ef8589; font-size: 9px; font-style: normal; font-weight: 500; }
 .pair-modal textarea { width: 100%; height: 86px; resize: vertical; padding: 11px; color: #cbd5d0; background: #0a0e10; border: 1px solid var(--line); border-radius: 10px; outline: none; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; line-height: 1.45; }
 .pair-modal textarea:focus { border-color: rgba(113,230,176,.38); }
 .pair-modal textarea.code { height: 110px; color: #8c9b94; }
@@ -131,6 +132,8 @@ button { color: inherit; }
 .notice { margin-top: 15px; padding: 10px 12px; color: #d4ddd8; background: #1a2225; border-radius: 9px; font-size: 11px; }
 .modal-input { width: 100%; height: 42px; padding: 0 11px; color: #e5ece8; background: #0a0e10; border: 1px solid var(--line); border-radius: 9px; outline: none; }
 .modal-input:focus { border-color: rgba(113,230,176,.38); }
+.modal-input.invalid { border-color: rgba(239,107,112,.75); box-shadow: 0 0 0 3px rgba(239,107,112,.08); }
+.field-help { margin: 7px 1px 0; color: #66736d; font-size: 9px; line-height: 1.5; }
 .modal-input.mono, .code-input { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 .code-input { text-transform: uppercase; letter-spacing: .18em; font-weight: 700; }
 .input-grid { display: grid; grid-template-columns: 1fr 110px; gap: 10px; }
