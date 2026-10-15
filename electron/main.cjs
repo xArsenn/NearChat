@@ -6,6 +6,14 @@ const dgram = require('dgram')
 const { WebSocket, WebSocketServer } = require('ws')
 const { autoUpdater } = require('electron-updater')
 
+// A packaged GUI app can outlive the terminal or updater process that launched it.
+// Ignore writes to those closed pipes instead of crashing the Electron main process.
+for (const stream of [process.stdout, process.stderr]) {
+  stream?.on?.('error', (error) => {
+    if (error.code !== 'EPIPE') process.nextTick(() => { throw error })
+  })
+}
+
 const DISCOVERY_PORT = 41234
 let mainWindow = null
 let roomServer = null
@@ -24,6 +32,8 @@ function emitUpdate(state, payload = {}) {
 
 autoUpdater.autoDownload = false
 autoUpdater.autoInstallOnAppQuit = true
+autoUpdater.disableWebInstaller = true
+if (app.isPackaged) autoUpdater.logger = null
 autoUpdater.on('checking-for-update', () => emitUpdate('checking'))
 autoUpdater.on('update-available', (info) => emitUpdate('available', { version: info.version }))
 autoUpdater.on('update-not-available', (info) => emitUpdate('current', { version: info.version }))
@@ -46,7 +56,7 @@ ipcMain.handle('update:download', async () => {
 })
 
 ipcMain.handle('update:install', async () => {
-  setImmediate(() => autoUpdater.quitAndInstall(false, true))
+  setImmediate(() => autoUpdater.quitAndInstall(true, true))
   return true
 })
 
