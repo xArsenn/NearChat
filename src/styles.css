@@ -147,6 +147,7 @@ button { color: inherit; }
 .inbox-item strong { font-size: 11px; }
 .inbox-item span { margin-top: 4px; color: #77857e; font-size: 9px; }
 .inbox-item a { width: 30px; height: 30px; display: grid; place-items: center; color: var(--green); background: rgba(113,230,176,.08); border-radius: 8px; }
+.inbox-item > button { width: 30px; height: 30px; display: grid; place-items: center; color: var(--green); background: rgba(113,230,176,.08); border: 0; border-radius: 8px; cursor: pointer; }
 .inbox-state { justify-self: center; width: 7px; height: 7px; background: #809089; border-radius: 50%; }
 .inbox-state.complete { background: var(--green); }
 .inbox-state.failed, .inbox-state.corrupt { background: #ef6b70; }

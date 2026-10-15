@@ -15,6 +15,7 @@ type LanDevice = {
   id: string
   name: string
   fingerprint: string
+  platform?: 'desktop' | 'web'
   role?: 'host' | 'guest'
 }
 
@@ -37,6 +38,11 @@ interface Window {
     stop(): Promise<boolean>
     readClipboard(): Promise<{ text: string; imageDataUrl: string }>
     writeClipboardText(text: string): Promise<boolean>
+    beginFileReceive(options: { id: string; name: string; size: number }): Promise<boolean>
+    appendFileChunk(id: string, base64: string): Promise<number>
+    finishFileReceive(id: string, hash?: string): Promise<{ ok: boolean; hash: string; path?: string }>
+    abortFileReceive(id: string): Promise<boolean>
+    showInFolder(filePath: string): Promise<boolean>
     onEvent(callback: (event: LanEvent) => void): () => void
     checkForUpdates(): Promise<boolean>
     downloadUpdate(): Promise<boolean>

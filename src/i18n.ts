@@ -3,6 +3,8 @@ export type Language = 'zh' | 'en'
 const zh = {
   device: '设备-{number}', anonymous: '匿名设备', temporaryRoom: '临时协作房间', roomFallback: '局域网房间', hostFallback: 'NearChat 房间',
   verified: '校验通过', verifying: '正在校验…', transferFailed: '传输失败', verifyFailed: '校验失败', percent: '{value}%',
+  remaining: '剩余 {value}', showInFolder: '在文件夹中显示', sendFolder: '发送整个文件夹',
+  largeFileDesktopOnly: '超过 50 MB 的文件目前需要房间内至少有一台桌面端设备', largeFileDesktopRecipients: '大文件将发送到桌面端；手机免安装端暂不接收超过 50 MB 的文件',
   disconnected: '连接已断开', networkError: '网络发生错误', decryptError: '收到无法解密的数据，可能使用了错误的房间口令', updateFailed: '检查更新失败', upToDate: '当前已经是最新版本', keyMissing: '房间密钥尚未建立',
   createFailed: '创建房间失败', scanning: '正在扫描局域网…', roomsFound: '发现 {count} 个房间，点击房间即可加入', noRooms: '暂时没有发现房间，请让创建者复制一键邀请给你',
   roomId: '房间 ID', roomCode: '房间口令', hostAddress: '主机地址', port: '端口', missingFields: '还需要填写：{fields}', autoSearching: '正在自动查找房间…', connecting: '正在连接房间…', autoNotFound: '没有自动找到这个房间。请确认两台设备连接同一 Wi-Fi，或读取创建者发来的一键邀请。', joined: '已加入局域网房间', joinFailed: '加入房间失败',
@@ -23,6 +25,8 @@ type TextKey = keyof typeof zh
 const en: Record<TextKey, string> = {
   device: 'Device-{number}', anonymous: 'Anonymous device', temporaryRoom: 'Temporary workspace', roomFallback: 'Local room', hostFallback: 'NearChat Room',
   verified: 'Verified', verifying: 'Verifying…', transferFailed: 'Transfer failed', verifyFailed: 'Verification failed', percent: '{value}%',
+  remaining: '{value} left', showInFolder: 'Show in folder', sendFolder: 'Send a folder',
+  largeFileDesktopOnly: 'Files over 50 MB currently require at least one desktop recipient in the room', largeFileDesktopRecipients: 'The large file will go to desktop recipients; no-install phone guests are limited to 50 MB',
   disconnected: 'Disconnected', networkError: 'A network error occurred', decryptError: 'Could not decrypt incoming data. The room code may be incorrect.', updateFailed: 'Could not check for updates', upToDate: 'You already have the latest version', keyMissing: 'The room key is not ready',
   createFailed: 'Could not create the room', scanning: 'Scanning the local network…', roomsFound: 'Found {count} room(s). Select one to join.', noRooms: 'No rooms found yet. Ask the host to send you a one-tap invite.',
   roomId: 'Room ID', roomCode: 'Room code', hostAddress: 'Host address', port: 'Port', missingFields: 'Please fill in: {fields}', autoSearching: 'Finding the room automatically…', connecting: 'Connecting to the room…', autoNotFound: 'Could not find this room automatically. Make sure both devices use the same Wi-Fi, or read a one-tap invite from the host.', joined: 'Joined the local room', joinFailed: 'Could not join the room',

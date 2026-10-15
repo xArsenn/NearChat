@@ -8,6 +8,11 @@ contextBridge.exposeInMainWorld('nearChat', {
   stop: () => ipcRenderer.invoke('lan:stop'),
   readClipboard: () => ipcRenderer.invoke('clipboard:read'),
   writeClipboardText: (text) => ipcRenderer.invoke('clipboard:write-text', text),
+  beginFileReceive: (options) => ipcRenderer.invoke('file:begin-receive', options),
+  appendFileChunk: (id, base64) => ipcRenderer.invoke('file:append-chunk', id, base64),
+  finishFileReceive: (id, hash) => ipcRenderer.invoke('file:finish-receive', id, hash),
+  abortFileReceive: (id) => ipcRenderer.invoke('file:abort-receive', id),
+  showInFolder: (filePath) => ipcRenderer.invoke('file:show-in-folder', filePath),
   onEvent: (callback) => {
     const listener = (_event, data) => callback(data)
     ipcRenderer.on('lan:event', listener)

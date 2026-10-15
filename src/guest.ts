@@ -5,7 +5,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
 
 type Locale = 'zh' | 'en'
-type Packet = { kind: string; id: string; sender?: string; senderId?: string; text?: string; name?: string; size?: number; mime?: string; chunks?: number; hash?: string; createdAt?: number; index?: number; data?: string; ok?: boolean }
+type Packet = { kind: string; id: string; sender?: string; senderId?: string; text?: string; name?: string; size?: number; mime?: string; chunks?: number; hash?: string; createdAt?: number; index?: number; data?: string; ok?: boolean; targets?: string[] }
 type Incoming = Packet & { parts: Map<number, Uint8Array>; state: HTMLElement; card: HTMLElement }
 
 const params = new URLSearchParams(location.search)
@@ -150,6 +150,7 @@ function addFile(packet: Packet) {
 }
 
 async function receive(packet: Packet) {
+  if (packet.targets?.length && !packet.targets.includes(deviceId)) return
   if (packet.kind === 'chat' || packet.kind === 'clipboard') {
     addMessage(packet)
     return
@@ -159,7 +160,7 @@ async function receive(packet: Packet) {
     incoming.set(packet.id, { ...packet, parts: new Map(), ...elements })
     return
   }
-  if (packet.kind !== 'file-chunk' || typeof packet.index !== 'number' || !packet.data) return
+  if (packet.kind !== 'file-chunk' || typeof packet.index !== 'number' || packet.data === undefined) return
   const transfer = incoming.get(packet.id)
   if (!transfer) return
   transfer.parts.set(packet.index, base64ToBytes(packet.data))
@@ -199,7 +200,7 @@ $('join').onclick = async () => {
   try {
     key = await deriveKey()
     socket = new WebSocket(`${location.protocol === 'https:' ? 'wss://' : 'ws://'}${location.host}`)
-    socket.onopen = () => socket?.send(JSON.stringify({ type: 'hello', roomId: config.roomId, code: config.code, locale, device: { id: deviceId, name: guestName, fingerprint: `WEB-${deviceId.slice(0, 15).toUpperCase()}` } }))
+    socket.onopen = () => socket?.send(JSON.stringify({ type: 'hello', roomId: config.roomId, code: config.code, locale, device: { id: deviceId, name: guestName, fingerprint: `WEB-${deviceId.slice(0, 15).toUpperCase()}`, platform: 'web' } }))
     socket.onmessage = async (event) => {
       try {
         const control = JSON.parse(event.data as string)
@@ -257,7 +258,7 @@ $('send').onclick = sendChat
   }
   const id = bytesToHex(randomBytes(16))
   const chunkSize = 48 * 1024
-  const chunks = Math.ceil(file.size / chunkSize)
+  const chunks = Math.max(1, Math.ceil(file.size / chunkSize))
   const hash = digest(await file.arrayBuffer())
   const createdAt = Date.now()
   socket?.send(await encrypt({ kind: 'file-meta', id, sender: guestName, senderId: deviceId, name: file.name, size: file.size, mime: file.type || 'application/octet-stream', chunks, hash, createdAt }))

@@ -26,6 +26,7 @@ let roomAdvertiser = null
 let joinedSocket = null
 let localDevice = null
 let appLocale = 'zh'
+const incomingFiles = new Map()
 
 function localized(zh, en, locale = appLocale) {
   return locale === 'en' ? en : zh
@@ -36,6 +37,7 @@ function cleanDevice(device = {}, fallbackName = localized('匿名设备', 'Anon
     id: String(device.id || crypto.randomBytes(16).toString('hex')).slice(0, 64),
     name: String(device.name || fallbackName).slice(0, 40),
     fingerprint: String(device.fingerprint || '').slice(0, 80),
+    platform: device.platform === 'web' ? 'web' : 'desktop',
   }
 }
 
@@ -93,6 +95,79 @@ ipcMain.handle('clipboard:write-text', async (_event, text) => {
   return true
 })
 
+function safeRelativePath(value) {
+  const parts = String(value || 'NearChat-file')
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter((part) => part && part !== '.' && part !== '..')
+    .map((part) => part.replace(/[<>:"|?*\x00-\x1f]/g, '_').slice(0, 120))
+  return (parts.slice(-20).join(path.sep) || 'NearChat-file')
+}
+
+function uniqueFilePath(target) {
+  const reserved = new Set(Array.from(incomingFiles.values(), (transfer) => transfer.finalPath))
+  if (!fs.existsSync(target) && !reserved.has(target)) return target
+  const extension = path.extname(target)
+  const stem = target.slice(0, -extension.length || undefined)
+  for (let index = 2; index < 10_000; index++) {
+    const candidate = `${stem} (${index})${extension}`
+    if (!fs.existsSync(candidate) && !reserved.has(candidate)) return candidate
+  }
+  return `${stem}-${Date.now()}${extension}`
+}
+
+ipcMain.handle('file:begin-receive', async (_event, options = {}) => {
+  const transferId = String(options.id || '').replace(/[^a-zA-Z0-9-]/g, '').slice(0, 80)
+  if (!transferId) throw new Error('Invalid transfer ID')
+  const root = path.join(app.getPath('downloads'), 'NearChat')
+  const finalPath = uniqueFilePath(path.join(root, safeRelativePath(options.name)))
+  const tempPath = path.join(app.getPath('temp'), `nearchat-${transferId}.part`)
+  await fs.promises.mkdir(path.dirname(finalPath), { recursive: true })
+  await fs.promises.writeFile(tempPath, Buffer.alloc(0))
+  incomingFiles.set(transferId, { tempPath, finalPath, size: Number(options.size) || 0, received: 0, hash: crypto.createHash('sha256') })
+  return true
+})
+
+ipcMain.handle('file:append-chunk', async (_event, transferId, base64) => {
+  const transfer = incomingFiles.get(String(transferId))
+  if (!transfer) throw new Error('Transfer is not initialized')
+  const bytes = Buffer.from(String(base64), 'base64')
+  transfer.received += bytes.length
+  if (transfer.received > transfer.size) throw new Error('Transfer exceeded its declared size')
+  transfer.hash.update(bytes)
+  await fs.promises.appendFile(transfer.tempPath, bytes)
+  return transfer.received
+})
+
+ipcMain.handle('file:finish-receive', async (_event, transferId, expectedHash) => {
+  const transfer = incomingFiles.get(String(transferId))
+  if (!transfer) throw new Error('Transfer is not initialized')
+  incomingFiles.delete(String(transferId))
+  const actualHash = transfer.hash.digest('hex')
+  if (transfer.received !== transfer.size || (expectedHash && actualHash !== String(expectedHash))) {
+    await fs.promises.unlink(transfer.tempPath).catch(() => {})
+    return { ok: false, hash: actualHash }
+  }
+  await fs.promises.rename(transfer.tempPath, transfer.finalPath).catch(async (error) => {
+    if (error.code !== 'EXDEV') throw error
+    await fs.promises.copyFile(transfer.tempPath, transfer.finalPath)
+    await fs.promises.unlink(transfer.tempPath)
+  })
+  return { ok: true, hash: actualHash, path: transfer.finalPath }
+})
+
+ipcMain.handle('file:abort-receive', async (_event, transferId) => {
+  const transfer = incomingFiles.get(String(transferId))
+  incomingFiles.delete(String(transferId))
+  if (transfer) await fs.promises.unlink(transfer.tempPath).catch(() => {})
+  return true
+})
+
+ipcMain.handle('file:show-in-folder', (_event, filePath) => {
+  shell.showItemInFolder(String(filePath || ''))
+  return true
+})
+
 ipcMain.handle('update:check', async () => {
   if (!app.isPackaged) {
     emitUpdate('error', { message: localized('开发版本不连接更新服务，请在安装版中检查更新', 'Development builds do not use the update service. Check again from an installed release.') })
@@ -138,7 +213,15 @@ function broadcastPayload(payload) {
   }
 }
 
+async function waitForSocket(socket) {
+  while (socket.readyState === WebSocket.OPEN && socket.bufferedAmount > 8 * 1024 * 1024) {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
 function stopNetworking() {
+  for (const transfer of incomingFiles.values()) fs.promises.unlink(transfer.tempPath).catch(() => {})
+  incomingFiles.clear()
   if (roomAdvertiser) {
     clearInterval(roomAdvertiser.timer)
     try { roomAdvertiser.socket.close() } catch {}
@@ -353,10 +436,12 @@ ipcMain.handle('lan:join-room', async (_event, target) => {
 
 ipcMain.handle('lan:send', async (_event, payload) => {
   if (roomServer) {
+    await Promise.all(Array.from(roomPeers, (peer) => waitForSocket(peer)))
     broadcastPayload(String(payload))
     return true
   }
   if (joinedSocket?.readyState === WebSocket.OPEN) {
+    await waitForSocket(joinedSocket)
     joinedSocket.send(String(payload))
     return true
   }
@@ -404,5 +489,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   stopNetworking()
+  for (const transfer of incomingFiles.values()) fs.promises.unlink(transfer.tempPath).catch(() => {})
+  incomingFiles.clear()
   if (process.platform !== 'darwin') app.quit()
 })

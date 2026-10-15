@@ -1,6 +1,7 @@
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useRef, useState } from 'react'
 import packageInfo from '../package.json'
 import QRCode from 'qrcode'
+import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js'
 import { getText, Language } from './i18n'
 import {
   CheckCircle2,
@@ -43,17 +44,20 @@ type ChatItem = {
   name?: string
   size?: number
   url?: string
+  savedPath?: string
   progress?: number
+  speed?: number
+  eta?: number
   status?: 'sending' | 'verifying' | 'complete' | 'failed' | 'corrupt'
   hash?: string
   createdAt: number
 }
 
 type WirePacket =
-  | { kind: 'chat'; id: string; sender: string; senderId?: string; text: string; createdAt: number }
-  | { kind: 'clipboard'; id: string; sender: string; senderId?: string; text: string; createdAt: number }
-  | { kind: 'file-meta'; id: string; sender: string; senderId?: string; name: string; size: number; mime: string; chunks: number; hash?: string; createdAt: number }
-  | { kind: 'file-chunk'; id: string; index: number; data: string }
+  | { kind: 'chat'; id: string; sender: string; senderId?: string; text: string; createdAt: number; targets?: string[] }
+  | { kind: 'clipboard'; id: string; sender: string; senderId?: string; text: string; createdAt: number; targets?: string[] }
+  | { kind: 'file-meta'; id: string; sender: string; senderId?: string; name: string; size: number; mime: string; chunks: number; hash?: string; createdAt: number; targets?: string[] }
+  | { kind: 'file-chunk'; id: string; index: number; data: string; targets?: string[] }
   | { kind: 'file-ack'; id: string; senderId: string; ok: boolean }
 
 type IncomingFile = {
@@ -64,7 +68,9 @@ type IncomingFile = {
   chunks: number
   hash?: string
   createdAt: number
-  parts: Map<number, Uint8Array>
+  receivedChunks: number
+  receivedBytes: number
+  startedAt: number
 }
 
 const CHAT_KEY = 'nearchat.lan.messages.v1'
@@ -132,15 +138,27 @@ async function decryptPacket(key: CryptoKey, envelope: string): Promise<WirePack
   return JSON.parse(new TextDecoder().decode(plain)) as WirePacket
 }
 
-async function sha256(buffer: ArrayBuffer) {
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', buffer))
-  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('')
+async function hashFile(file: File) {
+  const hash = nobleSha256.create()
+  const hashChunkSize = 4 * 1024 * 1024
+  for (let offset = 0; offset < file.size; offset += hashChunkSize) {
+    hash.update(new Uint8Array(await file.slice(offset, Math.min(file.size, offset + hashChunkSize)).arrayBuffer()))
+  }
+  return Array.from(hash.digest(), (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 function formatSize(size = 0) {
   if (size < 1024) return `${size} B`
   if (size < 1024 ** 2) return `${(size / 1024).toFixed(1)} KB`
-  return `${(size / 1024 ** 2).toFixed(1)} MB`
+  if (size < 1024 ** 3) return `${(size / 1024 ** 2).toFixed(1)} MB`
+  return `${(size / 1024 ** 3).toFixed(2)} GB`
+}
+
+function formatDuration(seconds = 0, language: Language) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return ''
+  if (seconds < 60) return language === 'zh' ? `${Math.ceil(seconds)} 秒` : `${Math.ceil(seconds)} sec`
+  const minutes = Math.ceil(seconds / 60)
+  return language === 'zh' ? `${minutes} 分钟` : `${minutes} min`
 }
 
 function fileStatus(item: ChatItem, language: Language) {
@@ -148,7 +166,10 @@ function fileStatus(item: ChatItem, language: Language) {
   if (item.status === 'verifying') return getText(language, 'verifying')
   if (item.status === 'failed') return getText(language, 'transferFailed')
   if (item.status === 'corrupt') return getText(language, 'verifyFailed')
-  return getText(language, 'percent', { value: item.progress || 0 })
+  const progress = getText(language, 'percent', { value: item.progress || 0 })
+  if (!item.speed) return progress
+  const eta = formatDuration(item.eta, language)
+  return `${progress} · ${formatSize(item.speed)}/s${eta ? ` · ${getText(language, 'remaining', { value: eta })}` : ''}`
 }
 
 function loadMessages(): ChatItem[] {
@@ -183,8 +204,10 @@ export default function LanApp() {
   const keyRef = useRef<CryptoKey | null>(null)
   const incomingRef = useRef(new Map<string, IncomingFile>())
   const outgoingRef = useRef(new Map<string, File>())
+  const receiveQueueRef = useRef(Promise.resolve())
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const folderInputRef = useRef<HTMLInputElement | null>(null)
   const addressInputRef = useRef<HTMLInputElement | null>(null)
   const portInputRef = useRef<HTMLInputElement | null>(null)
   const roomIdInputRef = useRef<HTMLInputElement | null>(null)
@@ -223,7 +246,7 @@ export default function LanApp() {
   const [qrDataUrl, setQrDataUrl] = useState('')
 
   const t = (key: Parameters<typeof getText>[1], values?: Record<string, string | number>) => getText(language, key, values)
-  const localDevice: LanDevice = { id: deviceId, name: displayName.trim() || t('anonymous'), fingerprint: deviceFingerprint(deviceId) }
+  const localDevice: LanDevice = { id: deviceId, name: displayName.trim() || t('anonymous'), fingerprint: deviceFingerprint(deviceId), platform: 'desktop' }
 
   useEffect(() => {
     localStorage.setItem('nearchat.language', language)
@@ -245,12 +268,11 @@ export default function LanApp() {
       }
       if (event.channel === 'error') setNotice(language === 'en' ? t('networkError') : event.message || t('networkError'))
       if (event.channel === 'payload' && event.payload && keyRef.current) {
-        try {
-          const packet = await decryptPacket(keyRef.current, event.payload)
+        const key = keyRef.current
+        receiveQueueRef.current = receiveQueueRef.current.then(async () => {
+          const packet = await decryptPacket(key, event.payload!)
           await receivePacket(packet)
-        } catch {
-          setNotice(t('decryptError'))
-        }
+        }).catch(() => setNotice(t('decryptError')))
       }
     })
     return unsubscribe
@@ -280,6 +302,7 @@ export default function LanApp() {
   }, [room])
 
   async function receivePacket(packet: WirePacket) {
+    if ('targets' in packet && packet.targets?.length && !packet.targets.includes(deviceId)) return
     if (packet.kind === 'chat' || packet.kind === 'clipboard') {
       setMessages((items) => [...items, { ...packet, side: 'peer' }])
       return
@@ -289,27 +312,25 @@ export default function LanApp() {
       return
     }
     if (packet.kind === 'file-meta') {
-      incomingRef.current.set(packet.id, { ...packet, parts: new Map() })
+      await api.beginFileReceive({ id: packet.id, name: packet.name, size: packet.size })
+      incomingRef.current.set(packet.id, { ...packet, receivedChunks: 0, receivedBytes: 0, startedAt: performance.now() })
       setMessages((items) => [...items.filter((item) => item.id !== packet.id), { id: packet.id, kind: 'file', side: 'peer', sender: packet.sender, senderId: packet.senderId, name: packet.name, size: packet.size, hash: packet.hash, status: 'sending', progress: 0, createdAt: packet.createdAt }])
       return
     }
     const transfer = incomingRef.current.get(packet.id)
     if (!transfer) return
-    transfer.parts.set(packet.index, base64ToBytes(packet.data))
-    const progress = Math.round((transfer.parts.size / transfer.chunks) * 100)
-    setMessages((items) => items.map((item) => item.id === packet.id ? { ...item, progress } : item))
-    if (transfer.parts.size === transfer.chunks) {
-      const buffers = Array.from({ length: transfer.chunks }, (_, index) => {
-        const part = transfer.parts.get(index)!
-        return part.buffer.slice(part.byteOffset, part.byteOffset + part.byteLength) as ArrayBuffer
-      })
-      const blob = new Blob(buffers, { type: transfer.mime })
+    transfer.receivedBytes = await api.appendFileChunk(packet.id, packet.data)
+    transfer.receivedChunks += 1
+    const elapsed = Math.max((performance.now() - transfer.startedAt) / 1000, 0.1)
+    const speed = transfer.receivedBytes / elapsed
+    const progress = Math.round((transfer.receivedChunks / transfer.chunks) * 100)
+    const eta = speed ? (transfer.size - transfer.receivedBytes) / speed : 0
+    setMessages((items) => items.map((item) => item.id === packet.id ? { ...item, progress, speed, eta } : item))
+    if (transfer.receivedChunks === transfer.chunks) {
       setMessages((items) => items.map((item) => item.id === packet.id ? { ...item, progress: 100, status: 'verifying' } : item))
-      const actualHash = await sha256(await blob.arrayBuffer())
-      const verified = !transfer.hash || actualHash === transfer.hash
-      const url = verified ? URL.createObjectURL(blob) : undefined
-      setMessages((items) => items.map((item) => item.id === packet.id ? { ...item, progress: 100, status: verified ? 'complete' : 'corrupt', url } : item))
-      await sendWire({ kind: 'file-ack', id: packet.id, senderId: deviceId, ok: verified })
+      const result = await api.finishFileReceive(packet.id, transfer.hash)
+      setMessages((items) => items.map((item) => item.id === packet.id ? { ...item, progress: 100, status: result.ok ? 'complete' : 'corrupt', savedPath: result.path, eta: 0 } : item))
+      await sendWire({ kind: 'file-ack', id: packet.id, senderId: deviceId, ok: result.ok })
       incomingRef.current.delete(packet.id)
     }
   }
@@ -412,16 +433,16 @@ export default function LanApp() {
     } catch (error) { setNotice(error instanceof Error ? error.message : t('sendFailed')) }
   }
 
-  async function sendFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
+  async function sendFiles(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files || [])
     event.target.value = ''
-    if (!file || !connected) return
-    await queueFile(file)
+    if (!files.length || !connected) return
+    for (const file of files) await queueFile(file)
   }
 
   async function queueFile(file: File) {
-    if (file.size > 50 * 1024 * 1024) {
-      setNotice(t('fileTooLarge'))
+    if (file.size > 50 * 1024 * 1024 && !members.some((member) => member.id !== deviceId && member.platform !== 'web')) {
+      setNotice(t('largeFileDesktopOnly'))
       return
     }
     const transferId = id()
@@ -434,7 +455,7 @@ export default function LanApp() {
     setDragging(false)
     if (!connected) return
     const files = Array.from(event.dataTransfer.files)
-    for (const file of files.slice(0, 20)) await queueFile(file)
+    for (const file of files) await queueFile(file)
   }
 
   async function openClipboard() {
@@ -477,18 +498,26 @@ export default function LanApp() {
   }
 
   async function transmitFile(file: File, transferId: string, createdAt: number) {
-    const chunkSize = 48 * 1024
-    const total = Math.ceil(file.size / chunkSize)
-    setMessages((items) => [...items.filter((item) => item.id !== transferId), { id: transferId, kind: 'file', side: 'me', sender: displayName, senderId: deviceId, name: file.name, size: file.size, status: 'sending', progress: 0, createdAt }])
+    const chunkSize = 256 * 1024
+    const total = Math.max(1, Math.ceil(file.size / chunkSize))
+    const transferName = file.webkitRelativePath || file.name
+    const targets = file.size > 50 * 1024 * 1024 ? members.filter((member) => member.id !== deviceId && member.platform !== 'web').map((member) => member.id) : undefined
+    if (targets && members.some((member) => member.platform === 'web')) setNotice(t('largeFileDesktopRecipients'))
+    const startedAt = performance.now()
+    setMessages((items) => [...items.filter((item) => item.id !== transferId), { id: transferId, kind: 'file', side: 'me', sender: displayName, senderId: deviceId, name: transferName, size: file.size, status: 'sending', progress: 0, createdAt }])
     try {
-      const hash = await sha256(await file.arrayBuffer())
+      const hash = await hashFile(file)
       setMessages((items) => items.map((item) => item.id === transferId ? { ...item, hash } : item))
-      await sendWire({ kind: 'file-meta', id: transferId, sender: displayName, senderId: deviceId, name: file.name, size: file.size, mime: file.type || 'application/octet-stream', chunks: total, hash, createdAt })
+      await sendWire({ kind: 'file-meta', id: transferId, sender: displayName, senderId: deviceId, name: transferName, size: file.size, mime: file.type || 'application/octet-stream', chunks: total, hash, createdAt, targets })
       for (let index = 0; index < total; index++) {
         const bytes = new Uint8Array(await file.slice(index * chunkSize, Math.min(file.size, (index + 1) * chunkSize)).arrayBuffer())
-        await sendWire({ kind: 'file-chunk', id: transferId, index, data: bytesToBase64(bytes) })
+        await sendWire({ kind: 'file-chunk', id: transferId, index, data: bytesToBase64(bytes), targets })
         const progress = Math.round(((index + 1) / total) * 100)
-        setMessages((items) => items.map((item) => item.id === transferId ? { ...item, progress } : item))
+        const elapsed = Math.max((performance.now() - startedAt) / 1000, 0.1)
+        const sent = Math.min(file.size, (index + 1) * chunkSize)
+        const speed = sent / elapsed
+        const eta = speed ? (file.size - sent) / speed : 0
+        setMessages((items) => items.map((item) => item.id === transferId ? { ...item, progress, speed, eta } : item))
       }
       setMessages((items) => items.map((item) => item.id === transferId ? { ...item, status: 'verifying' } : item))
     } catch (error) {
@@ -654,7 +683,7 @@ export default function LanApp() {
           {messages.map((item) => item.kind === 'system' ? null : (
             <div className={`message-row ${item.side}`} key={item.id}>
               <div className={`bubble ${item.kind === 'file' ? 'file-bubble' : ''}`}>
-                {item.kind === 'chat' ? <p>{item.text}</p> : item.kind === 'clipboard' ? <div className="clipboard-card"><Clipboard size={18} /><p>{item.text}</p><button title={t('copy')} onClick={() => copySharedText(item.text)}><Copy size={15} /></button></div> : <div className={`file-card ${item.status || ''}`}><FileUp size={23} /><div><strong>{item.name}</strong><span>{formatSize(item.size)} · {fileStatus(item, language)}</span><div className="file-progress"><i style={{ width: `${item.progress || 0}%` }} /></div></div>{item.url ? <a href={item.url} download={item.name} title={t('saveFile')}><Download size={18} /></a> : item.side === 'me' && item.status === 'failed' ? <button onClick={() => retryFile(item.id)} title={t('retry')}><RotateCcw size={17} /></button> : null}</div>}
+                {item.kind === 'chat' ? <p>{item.text}</p> : item.kind === 'clipboard' ? <div className="clipboard-card"><Clipboard size={18} /><p>{item.text}</p><button title={t('copy')} onClick={() => copySharedText(item.text)}><Copy size={15} /></button></div> : <div className={`file-card ${item.status || ''}`}><FileUp size={23} /><div><strong>{item.name}</strong><span>{formatSize(item.size)} · {fileStatus(item, language)}</span><div className="file-progress"><i style={{ width: `${item.progress || 0}%` }} /></div></div>{item.savedPath ? <button onClick={() => api.showInFolder(item.savedPath!)} title={t('showInFolder')}><FolderOpen size={18} /></button> : item.url ? <a href={item.url} download={item.name} title={t('saveFile')}><Download size={18} /></a> : item.side === 'me' && item.status === 'failed' ? <button onClick={() => retryFile(item.id)} title={t('retry')}><RotateCcw size={17} /></button> : null}</div>}
                 <time><strong>{displaySender(item.sender, item.senderId)}</strong> · {new Date(item.createdAt).toLocaleTimeString(language === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</time>
               </div>
             </div>
@@ -663,8 +692,10 @@ export default function LanApp() {
         </div>
 
         <form className="composer" onSubmit={sendMessage}>
-          <input ref={fileInputRef} className="hidden-file" type="file" onChange={sendFile} />
+          <input ref={fileInputRef} className="hidden-file" type="file" multiple onChange={sendFiles} />
+          <input ref={folderInputRef} className="hidden-file" type="file" multiple {...({ webkitdirectory: '', directory: '' } as Record<string, string>)} onChange={sendFiles} />
           <button type="button" className="attach-button" disabled={!connected} onClick={() => fileInputRef.current?.click()} title={t('sendFile')}><Paperclip size={19} /></button>
+          <button type="button" className="attach-button" disabled={!connected} onClick={() => folderInputRef.current?.click()} title={t('sendFolder')}><FolderOpen size={19} /></button>
           <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={connected ? t('messagePlaceholder') : t('joinToMessage')} disabled={!connected} />
           <button disabled={!draft.trim() || !connected} aria-label={t('send')}><Send size={19} /></button>
         </form>
@@ -720,7 +751,7 @@ export default function LanApp() {
             </>}
             {modal === 'inbox' && <>
               <div className="modal-icon"><FolderOpen size={23} /></div><h2>{t('fileInbox')}</h2><p className="modal-intro">{t('fileInboxIntro')}</p>
-              <div className="inbox-list">{messages.filter((item) => item.kind === 'file').length ? messages.filter((item) => item.kind === 'file').slice().reverse().map((item) => <div className="inbox-item" key={item.id}><FileUp size={18} /><div><strong>{item.name}</strong><span>{displaySender(item.sender, item.senderId)} · {formatSize(item.size)} · {fileStatus(item, language)}</span></div>{item.url ? <a href={item.url} download={item.name} title={t('saveFile')}><Download size={17} /></a> : <span className={`inbox-state ${item.status || ''}`} />}</div>) : <div className="inbox-empty">{t('fileInboxEmpty')}</div>}</div>
+              <div className="inbox-list">{messages.filter((item) => item.kind === 'file').length ? messages.filter((item) => item.kind === 'file').slice().reverse().map((item) => <div className="inbox-item" key={item.id}><FileUp size={18} /><div><strong>{item.name}</strong><span>{displaySender(item.sender, item.senderId)} · {formatSize(item.size)} · {fileStatus(item, language)}</span></div>{item.savedPath ? <button onClick={() => api.showInFolder(item.savedPath!)} title={t('showInFolder')}><FolderOpen size={17} /></button> : item.url ? <a href={item.url} download={item.name} title={t('saveFile')}><Download size={17} /></a> : <span className={`inbox-state ${item.status || ''}`} />}</div>) : <div className="inbox-empty">{t('fileInboxEmpty')}</div>}</div>
             </>}
             {notice && <div className="notice">{notice}</div>}
           </section>

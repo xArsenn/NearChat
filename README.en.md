@@ -20,8 +20,9 @@ The computer that creates a room temporarily acts as the host on the local netwo
 - Encrypted shared clipboard for text and clipboard images, with one-click copy
 - Drag files into the chat to send up to 20 at a time
 - A file inbox with sender names, verification status, and save actions
-- Direct file transfers up to 50 MB
-- Live progress, retry, saving, and SHA-256 integrity verification
+- Stream large files directly to disk on desktop without the old 50 MB app limit or loading the whole file into memory
+- Send entire folders while preserving nested directory structure; received files are saved under Downloads/NearChat
+- Live progress, speed, ETA, sender backpressure, retry, and SHA-256 integrity verification
 - AES-256-GCM application-layer encryption
 - Windows installer and in-app updates
 
@@ -31,11 +32,13 @@ The computer that creates a room temporarily acts as the host on the local netwo
 2. Open NearChat on one computer and create a room.
 3. On another computer, scan for nearby rooms, select the room, and enter its code.
 4. On a phone, scan the QR code shown by the host, enter a display name, and join in the browser.
-5. Use the clipboard button to send text or a screenshot, or drag files directly into the chat.
+5. Use the clipboard button to send text or a screenshot. Drag files into the chat, or use the folder button to select an entire folder.
 6. If discovery is blocked, read a one-tap invite. Use the advanced address and port fields only as a fallback.
 7. When Windows asks for network access, allow NearChat on private networks.
 
 The shared clipboard is read only after a user clicks. NearChat never syncs passwords, verification codes, or other clipboard content in the background.
+
+Desktop devices can transfer large files. No-install phone guests remain limited to 50 MB per file. If desktops and phone guests share a room, files over 50 MB are delivered only to desktop recipients to protect browser memory.
 
 ## Local development
 
