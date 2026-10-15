@@ -190,6 +190,7 @@ export default function LanApp() {
   const [manualAddress, setManualAddress] = useState('')
   const [manualPort, setManualPort] = useState('')
   const [manualRoomId, setManualRoomId] = useState('')
+  const [advancedJoin, setAdvancedJoin] = useState(false)
   const [joinAttempted, setJoinAttempted] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
@@ -313,35 +314,39 @@ export default function LanApp() {
     try {
       const rooms = await api.discoverRooms()
       setNearby(rooms)
-      setNotice(rooms.length ? `发现 ${rooms.length} 个房间` : '没有发现房间，可使用手动地址加入')
+      setNotice(rooms.length ? `发现 ${rooms.length} 个房间，点击房间即可加入` : '暂时没有发现房间，请让创建者复制一键邀请给你')
     } finally { setBusy(false) }
   }
 
   async function joinRoom() {
-    const target = selectedRoom || {
-      roomId: manualRoomId.trim(),
-      name: '局域网房间',
-      address: manualAddress.trim(),
-      port: Number(manualPort),
-    }
     const missing: string[] = []
-    const invalidPort = !Number.isInteger(target.port) || target.port < 1 || target.port > 65535
-    if (!target.address) missing.push('主机地址')
-    if (invalidPort) missing.push('端口')
-    if (!target.roomId) missing.push('房间 ID')
+    const roomId = selectedRoom?.roomId || manualRoomId.trim()
+    const invalidPort = !Number.isInteger(Number(manualPort)) || Number(manualPort) < 1 || Number(manualPort) > 65535
+    if (!selectedRoom && !roomId) missing.push('房间 ID')
     if (code.trim().length < 6) missing.push('房间口令')
+    if (!selectedRoom && advancedJoin && !manualAddress.trim()) missing.push('主机地址')
+    if (!selectedRoom && advancedJoin && invalidPort) missing.push('端口')
     if (missing.length) {
       setJoinAttempted(true)
-      setNotice(`还需要填写：${missing.join('、')}。输入框里的灰色文字只是提示，不是实际内容。`)
-      if (!target.address) addressInputRef.current?.focus()
-      else if (invalidPort) portInputRef.current?.focus()
-      else if (!target.roomId) roomIdInputRef.current?.focus()
-      else codeInputRef.current?.focus()
+      setNotice(`还需要填写：${missing.join('、')}`)
+      if (!roomId) roomIdInputRef.current?.focus()
+      else if (code.trim().length < 6) codeInputRef.current?.focus()
+      else if (advancedJoin && !manualAddress.trim()) addressInputRef.current?.focus()
+      else if (advancedJoin && invalidPort) portInputRef.current?.focus()
       return
     }
     setBusy(true)
-    setNotice('正在连接房间…')
+    setNotice(!selectedRoom && !advancedJoin ? '正在自动查找房间…' : '正在连接房间…')
     try {
+      let target = selectedRoom
+      if (!target && advancedJoin) {
+        target = { roomId, name: '局域网房间', address: manualAddress.trim(), port: Number(manualPort) }
+      }
+      if (!target) {
+        const rooms = await api.discoverRooms()
+        target = rooms.find((item) => item.roomId.toLowerCase() === roomId.toLowerCase()) || null
+        if (!target) throw new Error('没有自动找到这个房间。请确认两台设备连接同一 Wi-Fi，或读取创建者发来的一键邀请。')
+      }
       localStorage.setItem(PROFILE_KEY, displayName.trim() || '匿名设备')
       const joined = await api.joinRoom({ ...target, code: code.trim().toUpperCase(), device: localDevice })
       keyRef.current = await deriveRoomKey(joined.roomId, code.trim().toUpperCase())
@@ -349,6 +354,7 @@ export default function LanApp() {
       setRole('guest')
       setConnected(true)
       setModal('closed')
+      setAdvancedJoin(false)
       setJoinAttempted(false)
       setNotice('已加入局域网房间')
     } catch (error) {
@@ -436,8 +442,10 @@ export default function LanApp() {
       if (!invitation) throw new Error('剪贴板中没有有效的 NearChat 邀请')
       setSelectedRoom(invitation)
       setCode(invitation.code)
+      setAdvancedJoin(false)
+      setJoinAttempted(false)
       setModal('join')
-      setNotice('邀请信息已填入，可以直接加入')
+      setNotice('邀请读取成功，不用填写地址和端口，直接加入即可')
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '无法读取邀请')
     }
@@ -446,6 +454,7 @@ export default function LanApp() {
   function openJoin(roomItem?: LanRoom) {
     setSelectedRoom(roomItem || null)
     setCode('')
+    setAdvancedJoin(false)
     setJoinAttempted(false)
     setModal('join')
     setNotice('')
@@ -477,6 +486,7 @@ export default function LanApp() {
       : updateState === 'downloading' ? `正在下载 ${updatePercent}%`
         : updateState === 'downloaded' ? '重启并安装更新'
           : '检查软件更新'
+  const manualPortInvalid = !Number.isInteger(Number(manualPort)) || Number(manualPort) < 1 || Number(manualPort) > 65535
 
   return (
     <main className="app-shell">
@@ -540,31 +550,32 @@ export default function LanApp() {
           <section className="pair-modal lan-modal">
             <button className="modal-close" onClick={() => setModal('closed')}><X size={19} /></button>
             {modal === 'menu' && <>
-              <div className="modal-icon"><Wifi size={24} /></div><h2>局域网连接</h2><p className="modal-intro">一台电脑创建房间，其他设备通过附近发现或地址加入。</p>
+              <div className="modal-icon"><Wifi size={24} /></div><h2>局域网连接</h2><p className="modal-intro">两台设备连接同一个 Wi-Fi，即可自动发现并加入，无需填写地址和端口。</p>
               <label>我的名称</label><input className="modal-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
               <label>房间名称</label><input className="modal-input" value={roomName} onChange={(event) => setRoomName(event.target.value)} />
               <button className="primary wide" disabled={busy} onClick={createRoom}>{busy ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />} 创建房间</button>
               <div className="or"><span>或者加入附近房间</span></div>
               <button className="secondary wide" disabled={busy} onClick={discover}><RefreshCw className={busy ? 'spin' : ''} size={17} /> 扫描附近房间</button>
               <div className="nearby-list">{nearby.map((item) => <button key={item.roomId} onClick={() => openJoin(item)}><Radio size={17} /><span><strong>{item.name}</strong><small>{item.address}:{item.port}</small></span><span>加入</span></button>)}</div>
-              <button className="secondary wide" onClick={pasteInvite}><QrCode size={17} /> 从剪贴板读取邀请</button>
-              <button className="text-button" onClick={() => openJoin()}>使用地址手动加入</button>
+              <button className="secondary wide" onClick={pasteInvite}><QrCode size={17} /> 读取一键邀请</button>
+              <button className="text-button" onClick={() => openJoin()}>没有发现？输入房间 ID 和口令</button>
             </>}
             {modal === 'created' && room && <>
               <div className="modal-icon success"><CheckCircle2 size={24} /></div><h2>房间已经创建</h2><p className="modal-intro">让另一台电脑扫描附近房间，然后输入下面的房间口令。</p>
               {qrDataUrl && <div className="invite-qr"><img src={qrDataUrl} alt="NearChat 房间邀请二维码" /><span>扫码获取连接信息</span></div>}
               <div className="room-code"><span>房间口令</span><strong>{room.code}</strong><button onClick={() => navigator.clipboard.writeText(room.code || '')}><Copy size={16} /></button></div>
               <div className="room-details"><span>地址 <code>{room.address}:{room.port}</code></span><span>房间 ID <code>{room.roomId}</code></span></div>
-              <button className="secondary wide" onClick={() => navigator.clipboard.writeText(makeInvite(room))}><Copy size={16} /> 复制完整邀请</button>
+              <button className="secondary wide" onClick={() => navigator.clipboard.writeText(makeInvite(room))}><Copy size={16} /> 复制一键加入邀请</button>
               <button className="primary wide" onClick={() => setModal('closed')}>进入房间</button>
             </>}
             {modal === 'join' && <>
-              <div className="modal-icon"><Link2 size={24} /></div><h2>加入房间</h2><p className="modal-intro">{selectedRoom ? `正在加入“${selectedRoom.name}”` : '填写创建者界面上显示的连接信息。'}</p>
+              <div className="modal-icon"><Link2 size={24} /></div><h2>加入房间</h2><p className="modal-intro">{selectedRoom ? `正在加入“${selectedRoom.name}”，无需填写地址和端口。` : '只需填写房间 ID 和口令，软件会自动查找主机。'}</p>
               <label>我的名称</label><input className="modal-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-              {!selectedRoom && <><div className="input-grid"><div><label>主机地址 <em>必填</em></label><input ref={addressInputRef} className={`modal-input ${joinAttempted && !manualAddress.trim() ? 'invalid' : ''}`} aria-invalid={joinAttempted && !manualAddress.trim()} placeholder="请输入房主显示的地址" value={manualAddress} onChange={(event) => changeManualAddress(event.target.value)} /></div><div><label>端口 <em>必填</em></label><input ref={portInputRef} className={`modal-input ${joinAttempted && (!Number.isInteger(Number(manualPort)) || Number(manualPort) < 1 || Number(manualPort) > 65535) ? 'invalid' : ''}`} aria-invalid={joinAttempted && (!Number.isInteger(Number(manualPort)) || Number(manualPort) < 1 || Number(manualPort) > 65535)} inputMode="numeric" placeholder="请输入端口" value={manualPort} onChange={(event) => setManualPort(event.target.value.replace(/\D/g, '').slice(0, 5))} /></div></div><p className="field-help">可以直接在地址框粘贴完整地址，例如 192.168.1.20:45678，端口会自动填入。</p></>}
               {!selectedRoom && <><label>房间 ID <em>必填</em></label><input ref={roomIdInputRef} className={`modal-input mono ${joinAttempted && !manualRoomId.trim() ? 'invalid' : ''}`} aria-invalid={joinAttempted && !manualRoomId.trim()} placeholder="请输入房主显示的房间 ID" value={manualRoomId} onChange={(event) => setManualRoomId(event.target.value.trim())} /></>}
               <label>房间口令 <em>必填</em></label><input ref={codeInputRef} className={`modal-input code-input ${joinAttempted && code.trim().length < 6 ? 'invalid' : ''}`} aria-invalid={joinAttempted && code.trim().length < 6} maxLength={8} placeholder="请输入 8 位口令" value={code} onChange={(event) => setCode(event.target.value.toUpperCase().replace(/[^A-Z2-9]/g, ''))} />
-              <button className="primary wide" disabled={busy} onClick={joinRoom}>{busy ? <LoaderCircle className="spin" size={17} /> : <Link2 size={17} />} 加入房间</button>
+              {!selectedRoom && <button className="text-button advanced-toggle" onClick={() => { setAdvancedJoin((value) => !value); setJoinAttempted(false); setNotice('') }}>{advancedJoin ? '收起高级设置' : '高级设置：手动填写地址和端口'}</button>}
+              {!selectedRoom && advancedJoin && <div className="advanced-fields"><div className="input-grid"><div><label>主机地址 <em>必填</em></label><input ref={addressInputRef} className={`modal-input ${joinAttempted && !manualAddress.trim() ? 'invalid' : ''}`} aria-invalid={joinAttempted && !manualAddress.trim()} placeholder="例如 192.168.1.20" value={manualAddress} onChange={(event) => changeManualAddress(event.target.value)} /></div><div><label>端口 <em>必填</em></label><input ref={portInputRef} className={`modal-input ${joinAttempted && manualPortInvalid ? 'invalid' : ''}`} aria-invalid={joinAttempted && manualPortInvalid} inputMode="numeric" placeholder="例如 45678" value={manualPort} onChange={(event) => setManualPort(event.target.value.replace(/\D/g, '').slice(0, 5))} /></div></div><p className="field-help">仅在自动查找失败时使用，也可以把“地址:端口”直接粘贴到地址框。</p></div>}
+              <button className="primary wide" disabled={busy} onClick={joinRoom}>{busy ? <LoaderCircle className="spin" size={17} /> : <Link2 size={17} />} {!selectedRoom && !advancedJoin ? '自动查找并加入' : '加入房间'}</button>
             </>}
             {notice && <div className="notice">{notice}</div>}
           </section>

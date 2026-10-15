@@ -134,6 +134,8 @@ button { color: inherit; }
 .modal-input:focus { border-color: rgba(113,230,176,.38); }
 .modal-input.invalid { border-color: rgba(239,107,112,.75); box-shadow: 0 0 0 3px rgba(239,107,112,.08); }
 .field-help { margin: 7px 1px 0; color: #66736d; font-size: 9px; line-height: 1.5; }
+.advanced-toggle { margin-top: 14px; }
+.advanced-fields { margin-top: 2px; padding: 0 12px 12px; background: rgba(255,255,255,.018); border: 1px solid var(--line); border-radius: 11px; }
 .modal-input.mono, .code-input { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 .code-input { text-transform: uppercase; letter-spacing: .18em; font-weight: 700; }
 .input-grid { display: grid; grid-template-columns: 1fr 110px; gap: 10px; }
