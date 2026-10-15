@@ -3,6 +3,8 @@ const path = require('path')
 const os = require('os')
 const crypto = require('crypto')
 const dgram = require('dgram')
+const fs = require('fs')
+const http = require('http')
 const { WebSocket, WebSocketServer } = require('ws')
 const { autoUpdater } = require('electron-updater')
 
@@ -17,13 +19,19 @@ for (const stream of [process.stdout, process.stderr]) {
 const DISCOVERY_PORT = 41234
 let mainWindow = null
 let roomServer = null
+let roomHttpServer = null
 let roomInfo = null
 let roomPeers = new Set()
 let roomAdvertiser = null
 let joinedSocket = null
 let localDevice = null
+let appLocale = 'zh'
 
-function cleanDevice(device = {}, fallbackName = '匿名设备') {
+function localized(zh, en, locale = appLocale) {
+  return locale === 'en' ? en : zh
+}
+
+function cleanDevice(device = {}, fallbackName = localized('匿名设备', 'Anonymous device')) {
   return {
     id: String(device.id || crypto.randomBytes(16).toString('hex')).slice(0, 64),
     name: String(device.name || fallbackName).slice(0, 40),
@@ -69,7 +77,7 @@ autoUpdater.on('error', (error) => emitUpdate('error', { message: error.message 
 
 ipcMain.handle('update:check', async () => {
   if (!app.isPackaged) {
-    emitUpdate('error', { message: '开发版本不连接更新服务，请在安装版中检查更新' })
+    emitUpdate('error', { message: localized('开发版本不连接更新服务，请在安装版中检查更新', 'Development builds do not use the update service. Check again from an installed release.') })
     return false
   }
   await autoUpdater.checkForUpdates()
@@ -126,6 +134,10 @@ function stopNetworking() {
     try { roomServer.close() } catch {}
     roomServer = null
   }
+  if (roomHttpServer) {
+    try { roomHttpServer.close() } catch {}
+    roomHttpServer = null
+  }
   if (joinedSocket) {
     try { joinedSocket.close() } catch {}
     joinedSocket = null
@@ -156,37 +168,70 @@ function advertiseRoom(info) {
 
 ipcMain.handle('lan:start-room', async (_event, options = {}) => {
   stopNetworking()
+  appLocale = options.locale === 'en' ? 'en' : 'zh'
   const address = preferredAddress()
   const code = makeCode()
   const roomId = crypto.randomBytes(12).toString('hex')
-  const name = String(options.name || 'NearChat 房间').slice(0, 40)
-  localDevice = cleanDevice(options.device, '房主')
+  const name = String(options.name || localized('NearChat 房间', 'NearChat Room')).slice(0, 40)
+  localDevice = cleanDevice(options.device, localized('房主', 'Host'))
 
   return await new Promise((resolve, reject) => {
-    const server = new WebSocketServer({ host: '0.0.0.0', port: 0 })
+    const distDirectory = path.join(__dirname, '..', 'dist')
+    const guestPage = fs.readFileSync(path.join(distDirectory, 'guest.html'))
+    const httpServer = http.createServer((request, response) => {
+      if (request.method !== 'GET') {
+        response.writeHead(405).end()
+        return
+      }
+      const pathname = new URL(request.url || '/', 'http://localhost').pathname
+      if (pathname.startsWith('/assets/')) {
+        const assetPath = path.join(distDirectory, 'assets', path.basename(pathname))
+        if (!fs.existsSync(assetPath)) {
+          response.writeHead(404).end()
+          return
+        }
+        response.writeHead(200, {
+          'Content-Type': pathname.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+        })
+        response.end(fs.readFileSync(assetPath))
+        return
+      }
+      response.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'Referrer-Policy': 'no-referrer',
+      })
+      response.end(guestPage)
+    })
+    const server = new WebSocketServer({ server: httpServer })
+    roomHttpServer = httpServer
     roomServer = server
-    server.on('listening', () => {
-      const port = server.address().port
+    httpServer.listen(0, '0.0.0.0', () => {
+      const port = httpServer.address().port
       roomInfo = { roomId, name, address, port, code, owner: localDevice }
       advertiseRoom(roomInfo)
       emit('connected', { role: 'host', room: roomInfo, peers: 1 })
       publishMembers()
       resolve(roomInfo)
     })
-    server.on('error', (error) => {
-      emit('error', { message: `无法创建房间：${error.message}` })
+    httpServer.on('error', (error) => {
+      emit('error', { message: `${localized('无法创建房间', 'Could not create the room')}: ${error.message}` })
       reject(error)
     })
     server.on('connection', (socket) => {
       let authenticated = false
-      const timer = setTimeout(() => socket.close(4001, '认证超时'), 8000)
+      const timer = setTimeout(() => socket.close(4001, localized('认证超时', 'Authentication timed out')), 8000)
       socket.on('message', (data) => {
         if (!authenticated) {
           try {
             const hello = JSON.parse(data.toString())
             if (hello.type !== 'hello' || hello.roomId !== roomId || hello.code !== code) {
-              socket.send(JSON.stringify({ type: 'auth-error', message: '房间口令不正确' }))
-              socket.close(4003, '口令错误')
+              const message = localized('房间口令不正确', 'The room code is incorrect', hello.locale)
+              socket.send(JSON.stringify({ type: 'auth-error', message }))
+              socket.close(4003, message)
               return
             }
             authenticated = true
@@ -197,7 +242,7 @@ ipcMain.handle('lan:start-room', async (_event, options = {}) => {
             emit('peer-count', { peers: roomPeers.size + 1 })
             publishMembers()
           } catch {
-            socket.close(4002, '无效请求')
+            socket.close(4002, localized('无效请求', 'Invalid request'))
           }
           return
         }
@@ -240,21 +285,24 @@ ipcMain.handle('lan:discover', async () => {
 
 ipcMain.handle('lan:join-room', async (_event, target) => {
   stopNetworking()
+  appLocale = target.locale === 'en' ? 'en' : 'zh'
   localDevice = cleanDevice(target.device)
   return await new Promise((resolve, reject) => {
     const socket = new WebSocket(`ws://${target.address}:${Number(target.port)}`)
+    let authenticated = false
     joinedSocket = socket
     const timeout = setTimeout(() => {
       socket.close()
-      reject(new Error('连接超时，请确认两台设备位于同一局域网'))
+      reject(new Error(localized('连接超时，请确认两台设备位于同一局域网', 'Connection timed out. Make sure both devices are on the same local network.')))
     }, 10000)
-    socket.on('open', () => socket.send(JSON.stringify({ type: 'hello', roomId: target.roomId, code: String(target.code || '').toUpperCase(), device: localDevice })))
+    socket.on('open', () => socket.send(JSON.stringify({ type: 'hello', roomId: target.roomId, code: String(target.code || '').toUpperCase(), device: localDevice, locale: appLocale })))
     socket.on('message', (data) => {
       const payload = data.toString()
       try {
         const control = JSON.parse(payload)
         if (control.type === 'auth-ok') {
           clearTimeout(timeout)
+          authenticated = true
           roomInfo = { ...control.room, code: String(target.code || '').toUpperCase() }
           emit('connected', { role: 'guest', room: roomInfo, peers: 2 })
           emit('members', { members: control.members || [] })
@@ -276,11 +324,11 @@ ipcMain.handle('lan:join-room', async (_event, target) => {
     })
     socket.on('close', () => {
       clearTimeout(timeout)
-      emit('disconnected', { message: '与房间的连接已断开' })
+      if (authenticated) emit('disconnected', { message: localized('与房间的连接已断开', 'The room connection was closed') })
     })
-    socket.on('error', () => {
+    socket.on('error', (error) => {
       clearTimeout(timeout)
-      reject(new Error('无法连接主机，请检查防火墙和局域网设置'))
+      reject(new Error(`${localized('无法连接主机，请检查防火墙和局域网设置', 'Could not reach the host. Check the firewall and local network settings.')}: ${error.message}`))
     })
   })
 })
@@ -294,12 +342,12 @@ ipcMain.handle('lan:send', async (_event, payload) => {
     joinedSocket.send(String(payload))
     return true
   }
-  throw new Error('当前没有可用连接')
+  throw new Error(localized('当前没有可用连接', 'There is no active connection'))
 })
 
 ipcMain.handle('lan:stop', async () => {
   stopNetworking()
-  emit('disconnected', { message: '连接已断开' })
+  emit('disconnected', { message: localized('连接已断开', 'Disconnected') })
   return true
 })
 

@@ -1,8 +1,8 @@
 {
   "name": "nearchat",
   "private": true,
-  "version": "0.4.2",
-  "description": "无需账号与中心服务器的局域网点对点聊天工具",
+  "version": "0.5.0",
+  "description": "Bilingual serverless LAN chat and file collaboration with no-install phone guests",
   "author": "NearChat contributors",
   "repository": {
     "type": "git",
@@ -19,6 +19,8 @@
     "package:release": "npm run build && electron-builder --win nsis --config electron-builder.release.yml"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
     "electron-updater": "^6.8.9",
     "lucide-react": "latest",
     "qrcode": "^1.5.4",

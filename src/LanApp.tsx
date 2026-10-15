@@ -1,6 +1,7 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react'
 import packageInfo from '../package.json'
 import QRCode from 'qrcode'
+import { getText, Language } from './i18n'
 import {
   CheckCircle2,
   Copy,
@@ -131,12 +132,12 @@ function formatSize(size = 0) {
   return `${(size / 1024 ** 2).toFixed(1)} MB`
 }
 
-function fileStatus(item: ChatItem) {
-  if (item.status === 'complete') return '校验通过'
-  if (item.status === 'verifying') return '正在校验…'
-  if (item.status === 'failed') return '传输失败'
-  if (item.status === 'corrupt') return '校验失败'
-  return `${item.progress || 0}%`
+function fileStatus(item: ChatItem, language: Language) {
+  if (item.status === 'complete') return getText(language, 'verified')
+  if (item.status === 'verifying') return getText(language, 'verifying')
+  if (item.status === 'failed') return getText(language, 'transferFailed')
+  if (item.status === 'corrupt') return getText(language, 'verifyFailed')
+  return getText(language, 'percent', { value: item.progress || 0 })
 }
 
 function loadMessages(): ChatItem[] {
@@ -148,6 +149,11 @@ function makeInvite(room: LanRoom) {
   return `nearchat://join?${params.toString()}`
 }
 
+function makeWebInvite(room: LanRoom) {
+  const params = new URLSearchParams({ roomId: room.roomId, code: room.code || '', name: room.name })
+  return `http://${room.address}:${room.port}/?${params.toString()}`
+}
+
 function parseInvite(value: string): (LanRoom & { code: string }) | null {
   try {
     const url = new URL(value.trim())
@@ -157,7 +163,7 @@ function parseInvite(value: string): (LanRoom & { code: string }) | null {
     const roomId = url.searchParams.get('roomId') || ''
     const code = (url.searchParams.get('code') || '').toUpperCase()
     if (!address || !port || !roomId || code.length < 6) return null
-    return { address, port, roomId, code, name: url.searchParams.get('name') || '局域网房间' }
+    return { address, port, roomId, code, name: url.searchParams.get('name') || 'NearChat Room' }
   } catch { return null }
 }
 
@@ -172,7 +178,8 @@ export default function LanApp() {
   const portInputRef = useRef<HTMLInputElement | null>(null)
   const roomIdInputRef = useRef<HTMLInputElement | null>(null)
   const codeInputRef = useRef<HTMLInputElement | null>(null)
-  const [displayName, setDisplayName] = useState(localStorage.getItem(PROFILE_KEY) || `设备-${Math.floor(1000 + Math.random() * 9000)}`)
+  const [language, setLanguage] = useState<Language>(() => localStorage.getItem('nearchat.language') === 'en' || (!localStorage.getItem('nearchat.language') && !navigator.language.toLowerCase().startsWith('zh')) ? 'en' : 'zh')
+  const [displayName, setDisplayName] = useState(localStorage.getItem(PROFILE_KEY) || getText(language, 'device', { number: Math.floor(1000 + Math.random() * 9000) }))
   const [deviceId] = useState(persistentDeviceId)
   const [trustedIds, setTrustedIds] = useState<string[]>(loadTrustedIds)
   const [members, setMembers] = useState<LanDevice[]>([])
@@ -183,7 +190,7 @@ export default function LanApp() {
   const [room, setRoom] = useState<LanRoom | null>(null)
   const [peers, setPeers] = useState(1)
   const [modal, setModal] = useState<'closed' | 'menu' | 'created' | 'join'>('closed')
-  const [roomName, setRoomName] = useState('临时协作房间')
+  const [roomName, setRoomName] = useState(getText(language, 'temporaryRoom'))
   const [nearby, setNearby] = useState<LanRoom[]>([])
   const [selectedRoom, setSelectedRoom] = useState<LanRoom | null>(null)
   const [code, setCode] = useState('')
@@ -199,7 +206,13 @@ export default function LanApp() {
   const [updatePercent, setUpdatePercent] = useState(0)
   const [qrDataUrl, setQrDataUrl] = useState('')
 
-  const localDevice: LanDevice = { id: deviceId, name: displayName.trim() || '匿名设备', fingerprint: deviceFingerprint(deviceId) }
+  const t = (key: Parameters<typeof getText>[1], values?: Record<string, string | number>) => getText(language, key, values)
+  const localDevice: LanDevice = { id: deviceId, name: displayName.trim() || t('anonymous'), fingerprint: deviceFingerprint(deviceId) }
+
+  useEffect(() => {
+    localStorage.setItem('nearchat.language', language)
+    document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en'
+  }, [language])
 
   useEffect(() => {
     const unsubscribe = api.onEvent(async (event) => {
@@ -212,28 +225,28 @@ export default function LanApp() {
         setConnected(false)
         setMembers([])
         setPeers(1)
-        setNotice(event.message || '连接已断开')
+        setNotice(language === 'en' ? t('disconnected') : event.message || t('disconnected'))
       }
-      if (event.channel === 'error') setNotice(event.message || '网络发生错误')
+      if (event.channel === 'error') setNotice(language === 'en' ? t('networkError') : event.message || t('networkError'))
       if (event.channel === 'payload' && event.payload && keyRef.current) {
         try {
           const packet = await decryptPacket(keyRef.current, event.payload)
           await receivePacket(packet)
         } catch {
-          setNotice('收到无法解密的数据，可能使用了错误的房间口令')
+          setNotice(t('decryptError'))
         }
       }
     })
     return unsubscribe
-  }, [])
+  }, [language])
 
   useEffect(() => api.onUpdate((event) => {
     setUpdateState(event.state)
     if (event.version) setUpdateVersion(event.version)
     if (typeof event.percent === 'number') setUpdatePercent(event.percent)
-    if (event.state === 'error') setNotice(event.message || '检查更新失败')
-    if (event.state === 'current') setNotice('当前已经是最新版本')
-  }), [])
+    if (event.state === 'error') setNotice(t('updateFailed'))
+    if (event.state === 'current') setNotice(t('upToDate'))
+  }), [language])
 
   useEffect(() => {
     localStorage.setItem(CHAT_KEY, JSON.stringify(messages.filter((item) => !item.url).slice(-300)))
@@ -245,7 +258,7 @@ export default function LanApp() {
       setQrDataUrl('')
       return
     }
-    QRCode.toDataURL(makeInvite(room), { width: 220, margin: 1, color: { dark: '#07110d', light: '#f5fff9' } })
+    QRCode.toDataURL(makeWebInvite(room), { width: 220, margin: 1, color: { dark: '#07110d', light: '#f5fff9' } })
       .then(setQrDataUrl)
       .catch(() => setQrDataUrl(''))
   }, [room])
@@ -286,7 +299,7 @@ export default function LanApp() {
   }
 
   async function sendWire(packet: WirePacket) {
-    if (!keyRef.current) throw new Error('房间密钥尚未建立')
+    if (!keyRef.current) throw new Error(t('keyMissing'))
     await api.send(await encryptPacket(keyRef.current, packet))
   }
 
@@ -294,8 +307,8 @@ export default function LanApp() {
     setBusy(true)
     setNotice('')
     try {
-      localStorage.setItem(PROFILE_KEY, displayName.trim() || '匿名设备')
-      const created = await api.startRoom({ name: roomName.trim() || 'NearChat 房间', device: localDevice })
+      localStorage.setItem(PROFILE_KEY, displayName.trim() || t('anonymous'))
+      const created = await api.startRoom({ name: roomName.trim() || t('hostFallback'), device: localDevice, locale: language })
       keyRef.current = await deriveRoomKey(created.roomId, created.code!)
       setRoom(created)
       setRole('host')
@@ -304,17 +317,17 @@ export default function LanApp() {
       setConnected(true)
       setModal('created')
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '创建房间失败')
+      setNotice(language === 'zh' && error instanceof Error ? error.message : t('createFailed'))
     } finally { setBusy(false) }
   }
 
   async function discover() {
     setBusy(true)
-    setNotice('正在扫描局域网…')
+    setNotice(t('scanning'))
     try {
       const rooms = await api.discoverRooms()
       setNearby(rooms)
-      setNotice(rooms.length ? `发现 ${rooms.length} 个房间，点击房间即可加入` : '暂时没有发现房间，请让创建者复制一键邀请给你')
+      setNotice(rooms.length ? t('roomsFound', { count: rooms.length }) : t('noRooms'))
     } finally { setBusy(false) }
   }
 
@@ -322,13 +335,13 @@ export default function LanApp() {
     const missing: string[] = []
     const roomId = selectedRoom?.roomId || manualRoomId.trim()
     const invalidPort = !Number.isInteger(Number(manualPort)) || Number(manualPort) < 1 || Number(manualPort) > 65535
-    if (!selectedRoom && !roomId) missing.push('房间 ID')
-    if (code.trim().length < 6) missing.push('房间口令')
-    if (!selectedRoom && advancedJoin && !manualAddress.trim()) missing.push('主机地址')
-    if (!selectedRoom && advancedJoin && invalidPort) missing.push('端口')
+    if (!selectedRoom && !roomId) missing.push(t('roomId'))
+    if (code.trim().length < 6) missing.push(t('roomCode'))
+    if (!selectedRoom && advancedJoin && !manualAddress.trim()) missing.push(t('hostAddress'))
+    if (!selectedRoom && advancedJoin && invalidPort) missing.push(t('port'))
     if (missing.length) {
       setJoinAttempted(true)
-      setNotice(`还需要填写：${missing.join('、')}`)
+      setNotice(t('missingFields', { fields: missing.join(language === 'zh' ? '、' : ', ') }))
       if (!roomId) roomIdInputRef.current?.focus()
       else if (code.trim().length < 6) codeInputRef.current?.focus()
       else if (advancedJoin && !manualAddress.trim()) addressInputRef.current?.focus()
@@ -336,19 +349,19 @@ export default function LanApp() {
       return
     }
     setBusy(true)
-    setNotice(!selectedRoom && !advancedJoin ? '正在自动查找房间…' : '正在连接房间…')
+    setNotice(!selectedRoom && !advancedJoin ? t('autoSearching') : t('connecting'))
     try {
       let target = selectedRoom
       if (!target && advancedJoin) {
-        target = { roomId, name: '局域网房间', address: manualAddress.trim(), port: Number(manualPort) }
+        target = { roomId, name: t('roomFallback'), address: manualAddress.trim(), port: Number(manualPort) }
       }
       if (!target) {
         const rooms = await api.discoverRooms()
         target = rooms.find((item) => item.roomId.toLowerCase() === roomId.toLowerCase()) || null
-        if (!target) throw new Error('没有自动找到这个房间。请确认两台设备连接同一 Wi-Fi，或读取创建者发来的一键邀请。')
+        if (!target) throw new Error(t('autoNotFound'))
       }
-      localStorage.setItem(PROFILE_KEY, displayName.trim() || '匿名设备')
-      const joined = await api.joinRoom({ ...target, code: code.trim().toUpperCase(), device: localDevice })
+      localStorage.setItem(PROFILE_KEY, displayName.trim() || t('anonymous'))
+      const joined = await api.joinRoom({ ...target, code: code.trim().toUpperCase(), device: localDevice, locale: language })
       keyRef.current = await deriveRoomKey(joined.roomId, code.trim().toUpperCase())
       setRoom(joined)
       setRole('guest')
@@ -356,9 +369,9 @@ export default function LanApp() {
       setModal('closed')
       setAdvancedJoin(false)
       setJoinAttempted(false)
-      setNotice('已加入局域网房间')
+      setNotice(t('joined'))
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '加入房间失败')
+      setNotice(error instanceof Error ? error.message : t('joinFailed'))
     } finally { setBusy(false) }
   }
 
@@ -380,7 +393,7 @@ export default function LanApp() {
       await sendWire(packet)
       setMessages((items) => [...items, { ...packet, side: 'me' }])
       setDraft('')
-    } catch (error) { setNotice(error instanceof Error ? error.message : '发送失败') }
+    } catch (error) { setNotice(error instanceof Error ? error.message : t('sendFailed')) }
   }
 
   async function sendFile(event: ChangeEvent<HTMLInputElement>) {
@@ -388,7 +401,7 @@ export default function LanApp() {
     event.target.value = ''
     if (!file || !connected) return
     if (file.size > 50 * 1024 * 1024) {
-      setNotice('当前版本单个文件上限为 50 MB')
+      setNotice(t('fileTooLarge'))
       return
     }
     const transferId = id()
@@ -413,7 +426,7 @@ export default function LanApp() {
       setMessages((items) => items.map((item) => item.id === transferId ? { ...item, status: 'verifying' } : item))
     } catch (error) {
       setMessages((items) => items.map((item) => item.id === transferId ? { ...item, status: 'failed' } : item))
-      setNotice(error instanceof Error ? error.message : '文件发送失败')
+      setNotice(error instanceof Error ? error.message : t('fileSendFailed'))
     }
   }
 
@@ -421,7 +434,7 @@ export default function LanApp() {
     const file = outgoingRef.current.get(transferId)
     const item = messages.find((message) => message.id === transferId)
     if (!file || !item) {
-      setNotice('原文件已不可用，请重新选择文件')
+      setNotice(t('originalUnavailable'))
       return
     }
     await transmitFile(file, transferId, item.createdAt)
@@ -439,15 +452,15 @@ export default function LanApp() {
   async function pasteInvite() {
     try {
       const invitation = parseInvite(await navigator.clipboard.readText())
-      if (!invitation) throw new Error('剪贴板中没有有效的 NearChat 邀请')
+      if (!invitation) throw new Error(t('inviteInvalid'))
       setSelectedRoom(invitation)
       setCode(invitation.code)
       setAdvancedJoin(false)
       setJoinAttempted(false)
       setModal('join')
-      setNotice('邀请读取成功，不用填写地址和端口，直接加入即可')
+      setNotice(t('inviteReady'))
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '无法读取邀请')
+      setNotice(error instanceof Error ? error.message : t('inviteReadFailed'))
     }
   }
 
@@ -476,61 +489,62 @@ export default function LanApp() {
       else if (updateState === 'downloaded') await api.installUpdate()
       else if (!['checking', 'downloading'].includes(updateState)) await api.checkForUpdates()
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '更新操作失败')
+      setNotice(error instanceof Error ? error.message : t('updateActionFailed'))
       setUpdateState('error')
     }
   }
 
-  const updateLabel = updateState === 'checking' ? '正在检查更新…'
-    : updateState === 'available' ? `下载 v${updateVersion}`
-      : updateState === 'downloading' ? `正在下载 ${updatePercent}%`
-        : updateState === 'downloaded' ? '重启并安装更新'
-          : '检查软件更新'
+  const updateLabel = updateState === 'checking' ? t('checkingUpdate')
+    : updateState === 'available' ? t('downloadVersion', { version: updateVersion })
+      : updateState === 'downloading' ? t('downloading', { percent: updatePercent })
+        : updateState === 'downloaded' ? t('restartInstall')
+          : t('checkUpdate')
   const manualPortInvalid = !Number.isInteger(Number(manualPort)) || Number(manualPort) < 1 || Number(manualPort) > 65535
 
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><div className="brand-mark"><MessageCircle size={23} /></div><div><strong>NearChat</strong><span>离线局域网协作</span></div></div>
-        <button className="new-chat" onClick={() => { setModal('menu'); setNotice('') }}><Plus size={18} /> 创建或加入房间</button>
-        <div className="section-label">当前房间</div>
+        <div className="brand"><div className="brand-mark"><MessageCircle size={23} /></div><div><strong>NearChat</strong><span>{t('brandSubtitle')}</span></div></div>
+        <button className="new-chat" onClick={() => { setModal('menu'); setNotice('') }}><Plus size={18} /> {t('createOrJoin')}</button>
+        <div className="section-label">{t('currentRoom')}</div>
         <button className="conversation active">
           <span className="avatar"><Radio size={19} /></span>
-          <span className="conversation-copy"><strong>{room?.name || '尚未连接'}</strong><small>{connected ? `${role === 'host' ? '房主' : '成员'} · ${peers} 台设备` : '等待加入局域网房间'}</small></span>
+          <span className="conversation-copy"><strong>{room?.name || t('notConnected')}</strong><small>{connected ? `${role === 'host' ? t('host') : t('member')} · ${t('devices', { count: peers })}` : t('waitingRoom')}</small></span>
           <span className={`status-dot ${connected ? 'connected' : 'offline'}`} />
         </button>
         {connected && <>
-          <div className="section-label members-label">房间成员</div>
+          <div className="section-label members-label">{t('roomMembers')}</div>
           <div className="members-list">{members.map((member) => {
             const trusted = member.id === deviceId || trustedIds.includes(member.id)
-            return <button key={member.id} onClick={() => toggleTrust(member)} title={`${member.fingerprint}${member.id === deviceId ? ' · 当前设备' : trusted ? ' · 点击取消信任' : ' · 点击信任'}`}>
+            return <button key={member.id} onClick={() => toggleTrust(member)} title={`${member.fingerprint}${member.id === deviceId ? ` · ${t('currentDevice')}` : trusted ? ` · ${t('cancelTrust')}` : ` · ${t('trustDevice')}`}`}>
               <span className={`member-icon ${trusted ? 'trusted' : ''}`}>{trusted ? <UserRoundCheck size={15} /> : <Fingerprint size={15} />}</span>
-              <span><strong>{member.name}</strong><small>{member.id === deviceId ? `${member.role === 'host' ? '房主 · ' : ''}当前设备` : member.role === 'host' ? '房主' : trusted ? '可信设备' : '新设备'}</small></span>
+              <span><strong>{member.name}</strong><small>{member.id === deviceId ? `${member.role === 'host' ? `${t('host')} · ` : ''}${t('currentDevice')}` : member.role === 'host' ? t('host') : trusted ? t('trustedDevice') : t('newDevice')}</small></span>
             </button>
           })}</div>
         </>}
         <button className={`update-button ${updateState}`} onClick={handleUpdate} disabled={updateState === 'checking' || updateState === 'downloading'}><DownloadCloud size={16} /><span>{updateLabel}</span></button>
-        <div className="privacy-card"><ShieldCheck size={20} /><div><strong>消息与文件已加密</strong><span>内容使用房间口令派生的 AES-256 密钥加密，只在局域网设备间传输。</span></div></div>
-        <div className="identity"><span>v{packageInfo.version}</span><span>我的名称 <code>{displayName}</code></span></div>
+        <div className="privacy-card"><ShieldCheck size={20} /><div><strong>{t('encryptedTitle')}</strong><span>{t('encryptedBody')}</span></div></div>
+        <div className="identity"><span>v{packageInfo.version}</span><span>{t('myName')} <code>{displayName}</code></span></div>
       </aside>
 
       <section className="chat-panel">
         <header className="chat-header">
           <div className="avatar large"><Radio size={21} /></div>
-          <div className="header-copy"><strong>{room?.name || 'NearChat 局域网'}</strong><span><Users size={12} /> {connected ? `${peers} 台设备在线 · ${room?.address}:${room?.port}` : '未连接'}</span></div>
-          {connected && role === 'host' && <button className="icon-button invite-button" title="显示邀请二维码" onClick={() => setModal('created')}><QrCode size={18} /></button>}
-          {connected ? <button className="icon-button danger" title="断开连接" onClick={disconnect}><Unplug size={18} /></button> : <button className="connect-button" onClick={() => setModal('menu')}><Link2 size={17} /> 连接设备</button>}
+          <div className="header-copy"><strong>{room?.name || t('hostFallback')}</strong><span><Users size={12} /> {connected ? t('onlineDevices', { count: peers, address: `${room?.address}:${room?.port}` }) : t('notConnected')}</span></div>
+          <button className="language-switch" title={t('languageTitle')} onClick={() => setLanguage((value) => value === 'zh' ? 'en' : 'zh')}>{t('languageName')}</button>
+          {connected && role === 'host' && <button className="icon-button invite-button" title={t('showQr')} onClick={() => setModal('created')}><QrCode size={18} /></button>}
+          {connected ? <button className="icon-button danger" title={t('disconnect')} onClick={disconnect}><Unplug size={18} /></button> : <button className="connect-button" onClick={() => setModal('menu')}><Link2 size={17} /> {t('connectDevice')}</button>}
         </header>
 
         <div className="messages">
           {!connected && messages.length === 0 && (
-            <div className="empty-state"><div className="signal-rings"><Wifi size={32} /></div><h1>离线也能连接</h1><p>创建一个局域网房间，或扫描同一 Wi‑Fi 下的附近房间。无需账号，也不需要云服务器。</p><button onClick={() => setModal('menu')}><Plus size={18} /> 开始连接</button><div className="feature-row"><span><LockKeyhole size={15} /> AES-256</span><span><FolderOpen size={15} /> 文件直传</span><span><Wifi size={15} /> 断网可用</span></div></div>
+            <div className="empty-state"><div className="signal-rings"><Wifi size={32} /></div><h1>{t('emptyTitle')}</h1><p>{t('emptyBody')}</p><button onClick={() => setModal('menu')}><Plus size={18} /> {t('startConnect')}</button><div className="feature-row"><span><LockKeyhole size={15} /> AES-256</span><span><FolderOpen size={15} /> {t('directFile')}</span><span><Wifi size={15} /> {t('offlineReady')}</span></div></div>
           )}
           {messages.map((item) => item.kind === 'system' ? null : (
             <div className={`message-row ${item.side}`} key={item.id}>
               <div className={`bubble ${item.kind === 'file' ? 'file-bubble' : ''}`}>
-                {item.kind === 'chat' ? <p>{item.text}</p> : <div className={`file-card ${item.status || ''}`}><FileUp size={23} /><div><strong>{item.name}</strong><span>{formatSize(item.size)} · {fileStatus(item)}</span><div className="file-progress"><i style={{ width: `${item.progress || 0}%` }} /></div></div>{item.url ? <a href={item.url} download={item.name} title="保存文件"><Download size={18} /></a> : item.side === 'me' && item.status === 'failed' ? <button onClick={() => retryFile(item.id)} title="重试"><RotateCcw size={17} /></button> : null}</div>}
-                <time>{item.sender} · {new Date(item.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time>
+                {item.kind === 'chat' ? <p>{item.text}</p> : <div className={`file-card ${item.status || ''}`}><FileUp size={23} /><div><strong>{item.name}</strong><span>{formatSize(item.size)} · {fileStatus(item, language)}</span><div className="file-progress"><i style={{ width: `${item.progress || 0}%` }} /></div></div>{item.url ? <a href={item.url} download={item.name} title={t('saveFile')}><Download size={18} /></a> : item.side === 'me' && item.status === 'failed' ? <button onClick={() => retryFile(item.id)} title={t('retry')}><RotateCcw size={17} /></button> : null}</div>}
+                <time>{item.sender} · {new Date(item.createdAt).toLocaleTimeString(language === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</time>
               </div>
             </div>
           ))}
@@ -539,9 +553,9 @@ export default function LanApp() {
 
         <form className="composer" onSubmit={sendMessage}>
           <input ref={fileInputRef} className="hidden-file" type="file" onChange={sendFile} />
-          <button type="button" className="attach-button" disabled={!connected} onClick={() => fileInputRef.current?.click()} title="发送文件"><Paperclip size={19} /></button>
-          <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={connected ? '输入消息…' : '加入房间后即可发送消息'} disabled={!connected} />
-          <button disabled={!draft.trim() || !connected} aria-label="发送"><Send size={19} /></button>
+          <button type="button" className="attach-button" disabled={!connected} onClick={() => fileInputRef.current?.click()} title={t('sendFile')}><Paperclip size={19} /></button>
+          <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={connected ? t('messagePlaceholder') : t('joinToMessage')} disabled={!connected} />
+          <button disabled={!draft.trim() || !connected} aria-label={t('send')}><Send size={19} /></button>
         </form>
       </section>
 
@@ -550,32 +564,32 @@ export default function LanApp() {
           <section className="pair-modal lan-modal">
             <button className="modal-close" onClick={() => setModal('closed')}><X size={19} /></button>
             {modal === 'menu' && <>
-              <div className="modal-icon"><Wifi size={24} /></div><h2>局域网连接</h2><p className="modal-intro">两台设备连接同一个 Wi-Fi，即可自动发现并加入，无需填写地址和端口。</p>
-              <label>我的名称</label><input className="modal-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-              <label>房间名称</label><input className="modal-input" value={roomName} onChange={(event) => setRoomName(event.target.value)} />
-              <button className="primary wide" disabled={busy} onClick={createRoom}>{busy ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />} 创建房间</button>
-              <div className="or"><span>或者加入附近房间</span></div>
-              <button className="secondary wide" disabled={busy} onClick={discover}><RefreshCw className={busy ? 'spin' : ''} size={17} /> 扫描附近房间</button>
-              <div className="nearby-list">{nearby.map((item) => <button key={item.roomId} onClick={() => openJoin(item)}><Radio size={17} /><span><strong>{item.name}</strong><small>{item.address}:{item.port}</small></span><span>加入</span></button>)}</div>
-              <button className="secondary wide" onClick={pasteInvite}><QrCode size={17} /> 读取一键邀请</button>
-              <button className="text-button" onClick={() => openJoin()}>没有发现？输入房间 ID 和口令</button>
+              <div className="modal-icon"><Wifi size={24} /></div><h2>{t('lanConnect')}</h2><p className="modal-intro">{t('lanIntro')}</p>
+              <label>{t('myName')}</label><input className="modal-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+              <label>{t('roomName')}</label><input className="modal-input" value={roomName} onChange={(event) => setRoomName(event.target.value)} />
+              <button className="primary wide" disabled={busy} onClick={createRoom}>{busy ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />} {t('createRoom')}</button>
+              <div className="or"><span>{t('orNearby')}</span></div>
+              <button className="secondary wide" disabled={busy} onClick={discover}><RefreshCw className={busy ? 'spin' : ''} size={17} /> {t('scanNearby')}</button>
+              <div className="nearby-list">{nearby.map((item) => <button key={item.roomId} onClick={() => openJoin(item)}><Radio size={17} /><span><strong>{item.name}</strong><small>{item.address}:{item.port}</small></span><span>{t('join')}</span></button>)}</div>
+              <button className="secondary wide" onClick={pasteInvite}><QrCode size={17} /> {t('readInvite')}</button>
+              <button className="text-button" onClick={() => openJoin()}>{t('manualHint')}</button>
             </>}
             {modal === 'created' && room && <>
-              <div className="modal-icon success"><CheckCircle2 size={24} /></div><h2>房间已经创建</h2><p className="modal-intro">让另一台电脑扫描附近房间，然后输入下面的房间口令。</p>
-              {qrDataUrl && <div className="invite-qr"><img src={qrDataUrl} alt="NearChat 房间邀请二维码" /><span>扫码获取连接信息</span></div>}
-              <div className="room-code"><span>房间口令</span><strong>{room.code}</strong><button onClick={() => navigator.clipboard.writeText(room.code || '')}><Copy size={16} /></button></div>
-              <div className="room-details"><span>地址 <code>{room.address}:{room.port}</code></span><span>房间 ID <code>{room.roomId}</code></span></div>
-              <button className="secondary wide" onClick={() => navigator.clipboard.writeText(makeInvite(room))}><Copy size={16} /> 复制一键加入邀请</button>
-              <button className="primary wide" onClick={() => setModal('closed')}>进入房间</button>
+              <div className="modal-icon success"><CheckCircle2 size={24} /></div><h2>{t('roomCreated')}</h2><p className="modal-intro">{t('createdIntro')}</p>
+              {qrDataUrl && <div className="invite-qr"><img src={qrDataUrl} alt={t('qrAlt')} /><span>{t('qrCaption')}</span></div>}
+              <div className="room-code"><span>{t('roomCode')}</span><strong>{room.code}</strong><button onClick={() => navigator.clipboard.writeText(room.code || '')}><Copy size={16} /></button></div>
+              <div className="room-details"><span>{t('address')} <code>{room.address}:{room.port}</code></span><span>{t('roomId')} <code>{room.roomId}</code></span></div>
+              <button className="secondary wide" onClick={() => navigator.clipboard.writeText(makeInvite(room))}><Copy size={16} /> {t('copyInvite')}</button>
+              <button className="primary wide" onClick={() => setModal('closed')}>{t('enterRoom')}</button>
             </>}
             {modal === 'join' && <>
-              <div className="modal-icon"><Link2 size={24} /></div><h2>加入房间</h2><p className="modal-intro">{selectedRoom ? `正在加入“${selectedRoom.name}”，无需填写地址和端口。` : '只需填写房间 ID 和口令，软件会自动查找主机。'}</p>
-              <label>我的名称</label><input className="modal-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-              {!selectedRoom && <><label>房间 ID <em>必填</em></label><input ref={roomIdInputRef} className={`modal-input mono ${joinAttempted && !manualRoomId.trim() ? 'invalid' : ''}`} aria-invalid={joinAttempted && !manualRoomId.trim()} placeholder="请输入房主显示的房间 ID" value={manualRoomId} onChange={(event) => setManualRoomId(event.target.value.trim())} /></>}
-              <label>房间口令 <em>必填</em></label><input ref={codeInputRef} className={`modal-input code-input ${joinAttempted && code.trim().length < 6 ? 'invalid' : ''}`} aria-invalid={joinAttempted && code.trim().length < 6} maxLength={8} placeholder="请输入 8 位口令" value={code} onChange={(event) => setCode(event.target.value.toUpperCase().replace(/[^A-Z2-9]/g, ''))} />
-              {!selectedRoom && <button className="text-button advanced-toggle" onClick={() => { setAdvancedJoin((value) => !value); setJoinAttempted(false); setNotice('') }}>{advancedJoin ? '收起高级设置' : '高级设置：手动填写地址和端口'}</button>}
-              {!selectedRoom && advancedJoin && <div className="advanced-fields"><div className="input-grid"><div><label>主机地址 <em>必填</em></label><input ref={addressInputRef} className={`modal-input ${joinAttempted && !manualAddress.trim() ? 'invalid' : ''}`} aria-invalid={joinAttempted && !manualAddress.trim()} placeholder="例如 192.168.1.20" value={manualAddress} onChange={(event) => changeManualAddress(event.target.value)} /></div><div><label>端口 <em>必填</em></label><input ref={portInputRef} className={`modal-input ${joinAttempted && manualPortInvalid ? 'invalid' : ''}`} aria-invalid={joinAttempted && manualPortInvalid} inputMode="numeric" placeholder="例如 45678" value={manualPort} onChange={(event) => setManualPort(event.target.value.replace(/\D/g, '').slice(0, 5))} /></div></div><p className="field-help">仅在自动查找失败时使用，也可以把“地址:端口”直接粘贴到地址框。</p></div>}
-              <button className="primary wide" disabled={busy} onClick={joinRoom}>{busy ? <LoaderCircle className="spin" size={17} /> : <Link2 size={17} />} {!selectedRoom && !advancedJoin ? '自动查找并加入' : '加入房间'}</button>
+              <div className="modal-icon"><Link2 size={24} /></div><h2>{t('joinRoom')}</h2><p className="modal-intro">{selectedRoom ? t('selectedIntro', { name: selectedRoom.name }) : t('manualIntro')}</p>
+              <label>{t('myName')}</label><input className="modal-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+              {!selectedRoom && <><label>{t('roomId')} <em>{t('required')}</em></label><input ref={roomIdInputRef} className={`modal-input mono ${joinAttempted && !manualRoomId.trim() ? 'invalid' : ''}`} aria-invalid={joinAttempted && !manualRoomId.trim()} placeholder={t('roomIdPlaceholder')} value={manualRoomId} onChange={(event) => setManualRoomId(event.target.value.trim())} /></>}
+              <label>{t('roomCode')} <em>{t('required')}</em></label><input ref={codeInputRef} className={`modal-input code-input ${joinAttempted && code.trim().length < 6 ? 'invalid' : ''}`} aria-invalid={joinAttempted && code.trim().length < 6} maxLength={8} placeholder={t('codePlaceholder')} value={code} onChange={(event) => setCode(event.target.value.toUpperCase().replace(/[^A-Z2-9]/g, ''))} />
+              {!selectedRoom && <button className="text-button advanced-toggle" onClick={() => { setAdvancedJoin((value) => !value); setJoinAttempted(false); setNotice('') }}>{advancedJoin ? t('collapseAdvanced') : t('showAdvanced')}</button>}
+              {!selectedRoom && advancedJoin && <div className="advanced-fields"><div className="input-grid"><div><label>{t('hostAddress')} <em>{t('required')}</em></label><input ref={addressInputRef} className={`modal-input ${joinAttempted && !manualAddress.trim() ? 'invalid' : ''}`} aria-invalid={joinAttempted && !manualAddress.trim()} placeholder={t('addressExample')} value={manualAddress} onChange={(event) => changeManualAddress(event.target.value)} /></div><div><label>{t('port')} <em>{t('required')}</em></label><input ref={portInputRef} className={`modal-input ${joinAttempted && manualPortInvalid ? 'invalid' : ''}`} aria-invalid={joinAttempted && manualPortInvalid} inputMode="numeric" placeholder={t('portExample')} value={manualPort} onChange={(event) => setManualPort(event.target.value.replace(/\D/g, '').slice(0, 5))} /></div></div><p className="field-help">{t('advancedHelp')}</p></div>}
+              <button className="primary wide" disabled={busy} onClick={joinRoom}>{busy ? <LoaderCircle className="spin" size={17} /> : <Link2 size={17} />} {!selectedRoom && !advancedJoin ? t('autoFindJoin') : t('joinRoom')}</button>
             </>}
             {notice && <div className="notice">{notice}</div>}
           </section>

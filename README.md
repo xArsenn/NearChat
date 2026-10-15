@@ -1,87 +1,53 @@
 # NearChat
 
-无需账号、无需中心服务器的局域网聊天与文件协作工具。
+[中文说明](README.zh-CN.md) · [English documentation](README.en.md)
 
-NearChat v0.4.2 由创建房间的电脑临时运行局域网主机，其他设备通过附近发现、一键邀请或房间 ID 自动加入。消息和文件使用房间口令派生的 AES-256-GCM 密钥加密，不会上传至 NearChat 云端。
+## 中文介绍
 
-## 当前版本
+NearChat 是一个无需账号、无需云服务器的开源局域网协作工具。电脑创建临时房间后，其他电脑可以自动发现并加入；手机扫描二维码即可直接在浏览器中聊天和传文件，无需安装应用。
 
-- 局域网临时房间与多人连接
-- 8 位随机房间口令
-- AES-256-GCM 加密传输
-- 自动发现同一局域网内的房间
-- 房间 ID 与口令自动查找主机，无需填写地址和端口
-- 邀请二维码与一键加入邀请
-- 高级设置保留地址和端口手动加入
-- 实时成员列表、设备指纹与本地可信设备标记
-- 最多 50 MB 的文件直传
-- 实时传输进度、失败重试与文件保存
-- SHA-256 文件完整性校验与送达确认
-- 在线设备数量
-- 明确的连接超时、口令错误和防火墙提示
-- 本地保存消息记录
-- Windows 独立应用
-- 可安装的离线 PWA
+消息和文件使用房间口令派生的 AES-256-GCM 密钥加密，只在当前 Wi-Fi、手机热点或有线局域网内传输。NearChat 支持中文和英文界面，并可在软件中随时切换。
 
-当前版本主要面向同一 Wi-Fi、手机热点或有线局域网。成员需要同时在线；没有离线投递、云同步、账号找回或跨公网中继。聊天文字保存在本机浏览器存储中，目前尚未进行本地磁盘加密。
+### 亮点
 
-## 本地开发
+- 手机扫码免安装加入
+- Windows 桌面端中英文切换
+- 局域网自动发现，无需手填地址和端口
+- 多人聊天、成员列表和可信设备标记
+- 最大 50 MB 文件直传、进度、重试及 SHA-256 校验
+- 无账号、无广告、无追踪、无中心服务器
+- GitHub Release 自动更新
 
-需要 Node.js 20 或更新版本：
+## English introduction
+
+NearChat is an open-source local collaboration app that needs no account and no cloud server. A computer creates a temporary room, nearby computers can discover it automatically, and phones can scan a QR code to chat and transfer files directly in the browser—without installing an app.
+
+Messages and files are encrypted with an AES-256-GCM key derived from the room code and stay on the current Wi-Fi, mobile hotspot, or wired LAN. Both the desktop app and the no-install phone guest support Chinese and English.
+
+### Highlights
+
+- Join from a phone browser by scanning a QR code
+- Chinese and English desktop interface
+- Automatic LAN discovery with no address or port entry
+- Group chat, live member list, and trusted-device labels
+- Direct file transfer up to 50 MB with progress, retry, and SHA-256 verification
+- No account, ads, tracking, or central server
+- In-app updates through GitHub Releases
+
+## Development
+
+Requires Node.js 20 or newer.
 
 ```bash
 npm install
-npm run dev
-```
-
-构建网页版本：
-
-```bash
-npm run build
-```
-
-运行桌面版本：
-
-```bash
 npm run desktop
 ```
 
-生成 Windows 便携版：
+Build the web assets with `npm run build`, or create a Windows release installer with `npm run package:release`.
 
-```bash
-npm run package:win
-```
+## Security
 
-## 如何连接（推荐）
-
-1. 设备连接到同一个 Wi-Fi、手机热点或局域网。
-2. 设备 A 选择“创建房间”，记住房间口令。
-3. 其他设备选择“扫描附近房间”，选中房间并输入口令。
-4. 如果列表中没有房间，可以读取房主发来的一键邀请，或只填写房间 ID 和口令让软件自动查找。
-5. 仅当网络限制导致自动查找失败时，才需要展开高级设置填写地址和端口。
-5. Windows 首次询问网络权限时，请允许 NearChat 访问专用网络。
-
-## 自动更新与发布
-
-正式版使用 Windows NSIS 安装包。用户可以在左侧边栏点击“检查软件更新”，发现新版本后直接下载，并通过“重启并安装更新”完成升级。
-
-发布新版本时：
-
-1. 更新 `package.json` 中的版本号并提交代码。
-2. 创建与版本一致的标签，例如 `v0.4.0`。
-3. 将提交和标签推送到 GitHub。
-4. GitHub Actions 自动构建安装包、更新清单并发布 GitHub Release。
-
-```bash
-npm version patch
-git push origin main --follow-tags
-```
-
-不要为每次普通提交创建正式版本标签；`main` 分支用于持续开发，只有准备交付给用户时才发布版本。
-
-## 安全说明
-
-应用层消息和文件使用 AES-256-GCM 加密，密钥通过 PBKDF2 从随机房间口令派生。设备指纹与可信标记用于帮助用户识别再次出现的设备，目前不等同于证书级身份认证。本项目尚未经过独立安全审计，不应用于传输高敏感信息。本地数据库加密和跨公网中继将在后续版本设计。
+NearChat has not yet received an independent security audit. Do not use it for highly sensitive information. Room traffic is application-layer encrypted, but local message history is not currently encrypted at rest.
 
 ## License
 

@@ -30,9 +30,9 @@ type LanEvent = {
 
 interface Window {
   nearChat?: {
-    startRoom(options: { name: string; device: LanDevice }): Promise<LanRoom>
+    startRoom(options: { name: string; device: LanDevice; locale?: 'zh' | 'en' }): Promise<LanRoom>
     discoverRooms(): Promise<LanRoom[]>
-    joinRoom(target: LanRoom & { code: string; device: LanDevice }): Promise<LanRoom>
+    joinRoom(target: LanRoom & { code: string; device: LanDevice; locale?: 'zh' | 'en' }): Promise<LanRoom>
     send(payload: string): Promise<boolean>
     stop(): Promise<boolean>
     onEvent(callback: (event: LanEvent) => void): () => void

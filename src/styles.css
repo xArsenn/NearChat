@@ -59,6 +59,8 @@ button { color: inherit; }
 .privacy-card span { color: #71847b; margin-top: 5px; font-size: 10px; line-height: 1.55; }
 .identity { display: flex; justify-content: space-between; gap: 10px; padding: 14px 6px 0; color: #56615c; font-size: 10px; }
 .identity code { float: right; color: #718078; }
+.language-switch { min-width: 46px; height: 30px; padding: 0 9px; color: #9caaa3; background: #151d20; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font-size: 10px; font-weight: 700; }
+.language-switch:hover { color: var(--green); border-color: rgba(113,230,176,.28); }
 
 .chat-panel { min-width: 0; height: 100vh; display: grid; grid-template-rows: 76px 1fr auto; }
 .chat-header { display: flex; align-items: center; gap: 12px; padding: 0 27px; border-bottom: 1px solid var(--line); background: rgba(8,11,13,.7); backdrop-filter: blur(16px); }
