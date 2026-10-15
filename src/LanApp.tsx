@@ -1,11 +1,13 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react'
 import packageInfo from '../package.json'
+import QRCode from 'qrcode'
 import {
   CheckCircle2,
   Copy,
   Download,
   DownloadCloud,
   FileUp,
+  Fingerprint,
   FolderOpen,
   Link2,
   LoaderCircle,
@@ -13,11 +15,14 @@ import {
   MessageCircle,
   Paperclip,
   Plus,
+  QrCode,
   Radio,
   RefreshCw,
+  RotateCcw,
   Send,
   ShieldCheck,
   Unplug,
+  UserRoundCheck,
   Users,
   Wifi,
   X,
@@ -33,13 +38,16 @@ type ChatItem = {
   size?: number
   url?: string
   progress?: number
+  status?: 'sending' | 'verifying' | 'complete' | 'failed' | 'corrupt'
+  hash?: string
   createdAt: number
 }
 
 type WirePacket =
   | { kind: 'chat'; id: string; sender: string; text: string; createdAt: number }
-  | { kind: 'file-meta'; id: string; sender: string; name: string; size: number; mime: string; chunks: number; createdAt: number }
+  | { kind: 'file-meta'; id: string; sender: string; senderId?: string; name: string; size: number; mime: string; chunks: number; hash?: string; createdAt: number }
   | { kind: 'file-chunk'; id: string; index: number; data: string }
+  | { kind: 'file-ack'; id: string; senderId: string; ok: boolean }
 
 type IncomingFile = {
   sender: string
@@ -47,12 +55,31 @@ type IncomingFile = {
   size: number
   mime: string
   chunks: number
+  hash?: string
   createdAt: number
   parts: Map<number, Uint8Array>
 }
 
 const CHAT_KEY = 'nearchat.lan.messages.v1'
 const PROFILE_KEY = 'nearchat.lan.name.v1'
+const DEVICE_KEY = 'nearchat.device.id.v1'
+const TRUST_KEY = 'nearchat.trusted.devices.v1'
+
+function persistentDeviceId() {
+  const stored = localStorage.getItem(DEVICE_KEY)
+  if (stored) return stored
+  const value = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('')
+  localStorage.setItem(DEVICE_KEY, value)
+  return value
+}
+
+function deviceFingerprint(deviceId: string) {
+  return deviceId.match(/.{1,4}/g)?.slice(0, 4).join('-').toUpperCase() || deviceId.toUpperCase()
+}
+
+function loadTrustedIds() {
+  try { return JSON.parse(localStorage.getItem(TRUST_KEY) || '[]') as string[] } catch { return [] }
+}
 
 function id() { return crypto.randomUUID() }
 
@@ -93,23 +120,58 @@ async function decryptPacket(key: CryptoKey, envelope: string): Promise<WirePack
   return JSON.parse(new TextDecoder().decode(plain)) as WirePacket
 }
 
+async function sha256(buffer: ArrayBuffer) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', buffer))
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
 function formatSize(size = 0) {
   if (size < 1024) return `${size} B`
   if (size < 1024 ** 2) return `${(size / 1024).toFixed(1)} KB`
   return `${(size / 1024 ** 2).toFixed(1)} MB`
 }
 
+function fileStatus(item: ChatItem) {
+  if (item.status === 'complete') return '校验通过'
+  if (item.status === 'verifying') return '正在校验…'
+  if (item.status === 'failed') return '传输失败'
+  if (item.status === 'corrupt') return '校验失败'
+  return `${item.progress || 0}%`
+}
+
 function loadMessages(): ChatItem[] {
   try { return JSON.parse(localStorage.getItem(CHAT_KEY) || '[]') as ChatItem[] } catch { return [] }
+}
+
+function makeInvite(room: LanRoom) {
+  const params = new URLSearchParams({ address: room.address, port: String(room.port), roomId: room.roomId, code: room.code || '', name: room.name })
+  return `nearchat://join?${params.toString()}`
+}
+
+function parseInvite(value: string): (LanRoom & { code: string }) | null {
+  try {
+    const url = new URL(value.trim())
+    if (url.protocol !== 'nearchat:' || url.hostname !== 'join') return null
+    const address = url.searchParams.get('address') || ''
+    const port = Number(url.searchParams.get('port'))
+    const roomId = url.searchParams.get('roomId') || ''
+    const code = (url.searchParams.get('code') || '').toUpperCase()
+    if (!address || !port || !roomId || code.length < 6) return null
+    return { address, port, roomId, code, name: url.searchParams.get('name') || '局域网房间' }
+  } catch { return null }
 }
 
 export default function LanApp() {
   const api = window.nearChat!
   const keyRef = useRef<CryptoKey | null>(null)
   const incomingRef = useRef(new Map<string, IncomingFile>())
+  const outgoingRef = useRef(new Map<string, File>())
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [displayName, setDisplayName] = useState(localStorage.getItem(PROFILE_KEY) || `设备-${Math.floor(1000 + Math.random() * 9000)}`)
+  const [deviceId] = useState(persistentDeviceId)
+  const [trustedIds, setTrustedIds] = useState<string[]>(loadTrustedIds)
+  const [members, setMembers] = useState<LanDevice[]>([])
   const [messages, setMessages] = useState<ChatItem[]>(loadMessages)
   const [draft, setDraft] = useState('')
   const [connected, setConnected] = useState(false)
@@ -129,12 +191,21 @@ export default function LanApp() {
   const [updateState, setUpdateState] = useState<'idle' | 'checking' | 'available' | 'current' | 'downloading' | 'downloaded' | 'error'>('idle')
   const [updateVersion, setUpdateVersion] = useState('')
   const [updatePercent, setUpdatePercent] = useState(0)
+  const [qrDataUrl, setQrDataUrl] = useState('')
+
+  const localDevice: LanDevice = { id: deviceId, name: displayName.trim() || '匿名设备', fingerprint: deviceFingerprint(deviceId) }
 
   useEffect(() => {
     const unsubscribe = api.onEvent(async (event) => {
       if (event.channel === 'peer-count' && event.peers) setPeers(event.peers)
+      if (event.channel === 'members' && event.members) {
+        setMembers(event.members)
+        setPeers(event.members.length)
+      }
       if (event.channel === 'disconnected') {
         setConnected(false)
+        setMembers([])
+        setPeers(1)
         setNotice(event.message || '连接已断开')
       }
       if (event.channel === 'error') setNotice(event.message || '网络发生错误')
@@ -163,14 +234,28 @@ export default function LanApp() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  useEffect(() => {
+    if (!room?.code) {
+      setQrDataUrl('')
+      return
+    }
+    QRCode.toDataURL(makeInvite(room), { width: 220, margin: 1, color: { dark: '#07110d', light: '#f5fff9' } })
+      .then(setQrDataUrl)
+      .catch(() => setQrDataUrl(''))
+  }, [room])
+
   async function receivePacket(packet: WirePacket) {
     if (packet.kind === 'chat') {
       setMessages((items) => [...items, { ...packet, kind: 'chat', side: 'peer' }])
       return
     }
+    if (packet.kind === 'file-ack') {
+      setMessages((items) => items.map((item) => item.id === packet.id ? { ...item, status: packet.ok ? 'complete' : 'failed', progress: packet.ok ? 100 : item.progress } : item))
+      return
+    }
     if (packet.kind === 'file-meta') {
       incomingRef.current.set(packet.id, { ...packet, parts: new Map() })
-      setMessages((items) => [...items, { id: packet.id, kind: 'file', side: 'peer', sender: packet.sender, name: packet.name, size: packet.size, progress: 0, createdAt: packet.createdAt }])
+      setMessages((items) => [...items.filter((item) => item.id !== packet.id), { id: packet.id, kind: 'file', side: 'peer', sender: packet.sender, name: packet.name, size: packet.size, hash: packet.hash, status: 'sending', progress: 0, createdAt: packet.createdAt }])
       return
     }
     const transfer = incomingRef.current.get(packet.id)
@@ -184,8 +269,12 @@ export default function LanApp() {
         return part.buffer.slice(part.byteOffset, part.byteOffset + part.byteLength) as ArrayBuffer
       })
       const blob = new Blob(buffers, { type: transfer.mime })
-      const url = URL.createObjectURL(blob)
-      setMessages((items) => items.map((item) => item.id === packet.id ? { ...item, progress: 100, url } : item))
+      setMessages((items) => items.map((item) => item.id === packet.id ? { ...item, progress: 100, status: 'verifying' } : item))
+      const actualHash = await sha256(await blob.arrayBuffer())
+      const verified = !transfer.hash || actualHash === transfer.hash
+      const url = verified ? URL.createObjectURL(blob) : undefined
+      setMessages((items) => items.map((item) => item.id === packet.id ? { ...item, progress: 100, status: verified ? 'complete' : 'corrupt', url } : item))
+      await sendWire({ kind: 'file-ack', id: packet.id, senderId: deviceId, ok: verified })
       incomingRef.current.delete(packet.id)
     }
   }
@@ -200,11 +289,12 @@ export default function LanApp() {
     setNotice('')
     try {
       localStorage.setItem(PROFILE_KEY, displayName.trim() || '匿名设备')
-      const created = await api.startRoom({ name: roomName.trim() || 'NearChat 房间' })
+      const created = await api.startRoom({ name: roomName.trim() || 'NearChat 房间', device: localDevice })
       keyRef.current = await deriveRoomKey(created.roomId, created.code!)
       setRoom(created)
       setRole('host')
       setPeers(1)
+      setMembers([{ ...localDevice, role: 'host' }])
       setConnected(true)
       setModal('created')
     } catch (error) {
@@ -237,12 +327,11 @@ export default function LanApp() {
     setNotice('正在连接房间…')
     try {
       localStorage.setItem(PROFILE_KEY, displayName.trim() || '匿名设备')
-      const joined = await api.joinRoom({ ...target, code: code.trim().toUpperCase() })
+      const joined = await api.joinRoom({ ...target, code: code.trim().toUpperCase(), device: localDevice })
       keyRef.current = await deriveRoomKey(joined.roomId, code.trim().toUpperCase())
       setRoom(joined)
       setRole('guest')
       setConnected(true)
-      setPeers(2)
       setModal('closed')
       setNotice('已加入局域网房间')
     } catch (error) {
@@ -255,6 +344,7 @@ export default function LanApp() {
     setConnected(false)
     setRole(null)
     setRoom(null)
+    setMembers([])
     keyRef.current = null
   }
 
@@ -279,19 +369,61 @@ export default function LanApp() {
       return
     }
     const transferId = id()
+    outgoingRef.current.set(transferId, file)
+    await transmitFile(file, transferId, Date.now())
+  }
+
+  async function transmitFile(file: File, transferId: string, createdAt: number) {
     const chunkSize = 48 * 1024
     const total = Math.ceil(file.size / chunkSize)
-    const createdAt = Date.now()
-    setMessages((items) => [...items, { id: transferId, kind: 'file', side: 'me', sender: displayName, name: file.name, size: file.size, progress: 0, createdAt }])
+    setMessages((items) => [...items.filter((item) => item.id !== transferId), { id: transferId, kind: 'file', side: 'me', sender: displayName, name: file.name, size: file.size, status: 'sending', progress: 0, createdAt }])
     try {
-      await sendWire({ kind: 'file-meta', id: transferId, sender: displayName, name: file.name, size: file.size, mime: file.type || 'application/octet-stream', chunks: total, createdAt })
+      const hash = await sha256(await file.arrayBuffer())
+      setMessages((items) => items.map((item) => item.id === transferId ? { ...item, hash } : item))
+      await sendWire({ kind: 'file-meta', id: transferId, sender: displayName, senderId: deviceId, name: file.name, size: file.size, mime: file.type || 'application/octet-stream', chunks: total, hash, createdAt })
       for (let index = 0; index < total; index++) {
         const bytes = new Uint8Array(await file.slice(index * chunkSize, Math.min(file.size, (index + 1) * chunkSize)).arrayBuffer())
         await sendWire({ kind: 'file-chunk', id: transferId, index, data: bytesToBase64(bytes) })
         const progress = Math.round(((index + 1) / total) * 100)
         setMessages((items) => items.map((item) => item.id === transferId ? { ...item, progress } : item))
       }
-    } catch (error) { setNotice(error instanceof Error ? error.message : '文件发送失败') }
+      setMessages((items) => items.map((item) => item.id === transferId ? { ...item, status: 'verifying' } : item))
+    } catch (error) {
+      setMessages((items) => items.map((item) => item.id === transferId ? { ...item, status: 'failed' } : item))
+      setNotice(error instanceof Error ? error.message : '文件发送失败')
+    }
+  }
+
+  async function retryFile(transferId: string) {
+    const file = outgoingRef.current.get(transferId)
+    const item = messages.find((message) => message.id === transferId)
+    if (!file || !item) {
+      setNotice('原文件已不可用，请重新选择文件')
+      return
+    }
+    await transmitFile(file, transferId, item.createdAt)
+  }
+
+  function toggleTrust(member: LanDevice) {
+    if (member.id === deviceId) return
+    setTrustedIds((current) => {
+      const next = current.includes(member.id) ? current.filter((value) => value !== member.id) : [...current, member.id]
+      localStorage.setItem(TRUST_KEY, JSON.stringify(next))
+      return next
+    })
+  }
+
+  async function pasteInvite() {
+    try {
+      const invitation = parseInvite(await navigator.clipboard.readText())
+      if (!invitation) throw new Error('剪贴板中没有有效的 NearChat 邀请')
+      setSelectedRoom(invitation)
+      setCode(invitation.code)
+      setModal('join')
+      setNotice('邀请信息已填入，可以直接加入')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '无法读取邀请')
+    }
   }
 
   function openJoin(roomItem?: LanRoom) {
@@ -329,6 +461,16 @@ export default function LanApp() {
           <span className="conversation-copy"><strong>{room?.name || '尚未连接'}</strong><small>{connected ? `${role === 'host' ? '房主' : '成员'} · ${peers} 台设备` : '等待加入局域网房间'}</small></span>
           <span className={`status-dot ${connected ? 'connected' : 'offline'}`} />
         </button>
+        {connected && <>
+          <div className="section-label members-label">房间成员</div>
+          <div className="members-list">{members.map((member) => {
+            const trusted = member.id === deviceId || trustedIds.includes(member.id)
+            return <button key={member.id} onClick={() => toggleTrust(member)} title={`${member.fingerprint}${member.id === deviceId ? ' · 当前设备' : trusted ? ' · 点击取消信任' : ' · 点击信任'}`}>
+              <span className={`member-icon ${trusted ? 'trusted' : ''}`}>{trusted ? <UserRoundCheck size={15} /> : <Fingerprint size={15} />}</span>
+              <span><strong>{member.name}</strong><small>{member.id === deviceId ? `${member.role === 'host' ? '房主 · ' : ''}当前设备` : member.role === 'host' ? '房主' : trusted ? '可信设备' : '新设备'}</small></span>
+            </button>
+          })}</div>
+        </>}
         <button className={`update-button ${updateState}`} onClick={handleUpdate} disabled={updateState === 'checking' || updateState === 'downloading'}><DownloadCloud size={16} /><span>{updateLabel}</span></button>
         <div className="privacy-card"><ShieldCheck size={20} /><div><strong>消息与文件已加密</strong><span>内容使用房间口令派生的 AES-256 密钥加密，只在局域网设备间传输。</span></div></div>
         <div className="identity"><span>v{packageInfo.version}</span><span>我的名称 <code>{displayName}</code></span></div>
@@ -338,6 +480,7 @@ export default function LanApp() {
         <header className="chat-header">
           <div className="avatar large"><Radio size={21} /></div>
           <div className="header-copy"><strong>{room?.name || 'NearChat 局域网'}</strong><span><Users size={12} /> {connected ? `${peers} 台设备在线 · ${room?.address}:${room?.port}` : '未连接'}</span></div>
+          {connected && role === 'host' && <button className="icon-button invite-button" title="显示邀请二维码" onClick={() => setModal('created')}><QrCode size={18} /></button>}
           {connected ? <button className="icon-button danger" title="断开连接" onClick={disconnect}><Unplug size={18} /></button> : <button className="connect-button" onClick={() => setModal('menu')}><Link2 size={17} /> 连接设备</button>}
         </header>
 
@@ -348,7 +491,7 @@ export default function LanApp() {
           {messages.map((item) => item.kind === 'system' ? null : (
             <div className={`message-row ${item.side}`} key={item.id}>
               <div className={`bubble ${item.kind === 'file' ? 'file-bubble' : ''}`}>
-                {item.kind === 'chat' ? <p>{item.text}</p> : <div className="file-card"><FileUp size={23} /><div><strong>{item.name}</strong><span>{formatSize(item.size)} · {item.progress === 100 ? '传输完成' : `${item.progress || 0}%`}</span><div className="file-progress"><i style={{ width: `${item.progress || 0}%` }} /></div></div>{item.url && <a href={item.url} download={item.name} title="保存文件"><Download size={18} /></a>}</div>}
+                {item.kind === 'chat' ? <p>{item.text}</p> : <div className={`file-card ${item.status || ''}`}><FileUp size={23} /><div><strong>{item.name}</strong><span>{formatSize(item.size)} · {fileStatus(item)}</span><div className="file-progress"><i style={{ width: `${item.progress || 0}%` }} /></div></div>{item.url ? <a href={item.url} download={item.name} title="保存文件"><Download size={18} /></a> : item.side === 'me' && item.status === 'failed' ? <button onClick={() => retryFile(item.id)} title="重试"><RotateCcw size={17} /></button> : null}</div>}
                 <time>{item.sender} · {new Date(item.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time>
               </div>
             </div>
@@ -376,12 +519,15 @@ export default function LanApp() {
               <div className="or"><span>或者加入附近房间</span></div>
               <button className="secondary wide" disabled={busy} onClick={discover}><RefreshCw className={busy ? 'spin' : ''} size={17} /> 扫描附近房间</button>
               <div className="nearby-list">{nearby.map((item) => <button key={item.roomId} onClick={() => openJoin(item)}><Radio size={17} /><span><strong>{item.name}</strong><small>{item.address}:{item.port}</small></span><span>加入</span></button>)}</div>
+              <button className="secondary wide" onClick={pasteInvite}><QrCode size={17} /> 从剪贴板读取邀请</button>
               <button className="text-button" onClick={() => openJoin()}>使用地址手动加入</button>
             </>}
             {modal === 'created' && room && <>
               <div className="modal-icon success"><CheckCircle2 size={24} /></div><h2>房间已经创建</h2><p className="modal-intro">让另一台电脑扫描附近房间，然后输入下面的房间口令。</p>
+              {qrDataUrl && <div className="invite-qr"><img src={qrDataUrl} alt="NearChat 房间邀请二维码" /><span>扫码获取连接信息</span></div>}
               <div className="room-code"><span>房间口令</span><strong>{room.code}</strong><button onClick={() => navigator.clipboard.writeText(room.code || '')}><Copy size={16} /></button></div>
               <div className="room-details"><span>地址 <code>{room.address}:{room.port}</code></span><span>房间 ID <code>{room.roomId}</code></span></div>
+              <button className="secondary wide" onClick={() => navigator.clipboard.writeText(makeInvite(room))}><Copy size={16} /> 复制完整邀请</button>
               <button className="primary wide" onClick={() => setModal('closed')}>进入房间</button>
             </>}
             {modal === 'join' && <>

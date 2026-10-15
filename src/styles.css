@@ -39,6 +39,16 @@ button { color: inherit; }
 .status-dot.connected { background: var(--green); box-shadow: 0 0 0 4px rgba(113,230,176,.08); }
 .status-dot.connecting { background: #f2c15c; animation: pulse 1.3s infinite; }
 .status-dot.failed { background: #ef6b70; }
+.members-label { margin-top: 18px; }
+.members-list { display: grid; gap: 5px; max-height: 170px; overflow-y: auto; padding-right: 2px; }
+.members-list > button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 9px; color: #a9b4af; background: transparent; border: 1px solid transparent; border-radius: 9px; text-align: left; cursor: pointer; }
+.members-list > button:hover { background: #12191b; border-color: var(--line); }
+.members-list > button > span:last-child { min-width: 0; flex: 1; }
+.members-list strong, .members-list small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.members-list strong { font-size: 11px; }
+.members-list small { margin-top: 2px; color: #64716b; font-size: 9px; }
+.member-icon { width: 29px; height: 29px; display: grid; place-items: center; color: #728078; background: #161e20; border-radius: 8px; }
+.member-icon.trusted { color: var(--green); background: rgba(113,230,176,.09); }
 .update-button { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 9px 11px; color: #899790; background: transparent; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; font-size: 10px; }
 .update-button:hover:not(:disabled), .update-button.available, .update-button.downloaded { color: var(--green); border-color: rgba(113,230,176,.2); background: rgba(113,230,176,.05); }
 .update-button:disabled { cursor: progress; }
@@ -59,6 +69,7 @@ button { color: inherit; }
 .connect-button, .icon-button { display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--line); background: #12181b; border-radius: 10px; padding: 9px 13px; cursor: pointer; }
 .connect-button:hover { border-color: rgba(113,230,176,.28); }
 .icon-button { width: 39px; height: 39px; padding: 0; color: #ef8589; }
+.icon-button.invite-button { color: var(--green); }
 .mobile-back { display: none; }
 .messages { min-height: 0; overflow-y: auto; padding: 30px clamp(22px, 7vw, 100px); scrollbar-width: thin; scrollbar-color: #28312d transparent; }
 .empty-state { max-width: 510px; margin: max(3vh, 25px) auto 0; text-align: center; }
@@ -93,6 +104,8 @@ button { color: inherit; }
 .file-card strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .file-card span { margin-top: 3px; color: #84918b; font-size: 9px; }
 .file-card a { width: 30px; height: 30px; display: grid; place-items: center; color: var(--green); background: rgba(113,230,176,.08); border-radius: 8px; }
+.file-card > button { width: 30px; height: 30px; display: grid; place-items: center; color: #ffad72; background: rgba(255,145,87,.08); border: 0; border-radius: 8px; cursor: pointer; }
+.file-card.failed > svg, .file-card.corrupt > svg { color: #ef8589; }
 .file-progress { height: 3px; margin-top: 7px; overflow: hidden; background: rgba(255,255,255,.07); border-radius: 5px; }
 .file-progress i { display: block; height: 100%; background: var(--green); transition: width .15s; }
 
@@ -135,6 +148,9 @@ button { color: inherit; }
 .room-code span { color: #77847e; font-size: 10px; }
 .room-code strong { margin-top: 7px; color: var(--green); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 25px; letter-spacing: .18em; }
 .room-code button { position: absolute; right: 10px; top: 10px; display: grid; place-items: center; width: 30px; height: 30px; color: #87948e; background: #141b1e; border: 0; border-radius: 8px; cursor: pointer; }
+.invite-qr { display: grid; justify-items: center; gap: 7px; margin: 0 auto 14px; }
+.invite-qr img { width: 164px; height: 164px; padding: 8px; background: #f5fff9; border-radius: 13px; }
+.invite-qr span { color: #75827c; font-size: 10px; }
 .room-details { display: grid; gap: 6px; margin: 13px 0; color: #738079; font-size: 10px; }
 .room-details code { float: right; max-width: 290px; overflow: hidden; text-overflow: ellipsis; color: #a4b0aa; }
 .spin { animation: rotate 1s linear infinite; }

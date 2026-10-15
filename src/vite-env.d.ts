@@ -8,22 +8,31 @@ type LanRoom = {
   address: string
   port: number
   code?: string
+  owner?: LanDevice
+}
+
+type LanDevice = {
+  id: string
+  name: string
+  fingerprint: string
+  role?: 'host' | 'guest'
 }
 
 type LanEvent = {
-  channel: 'connected' | 'disconnected' | 'peer-count' | 'payload' | 'error'
+  channel: 'connected' | 'disconnected' | 'peer-count' | 'members' | 'payload' | 'error'
   role?: 'host' | 'guest'
   room?: LanRoom
   peers?: number
+  members?: LanDevice[]
   payload?: string
   message?: string
 }
 
 interface Window {
   nearChat?: {
-    startRoom(options: { name: string }): Promise<LanRoom>
+    startRoom(options: { name: string; device: LanDevice }): Promise<LanRoom>
     discoverRooms(): Promise<LanRoom[]>
-    joinRoom(target: LanRoom & { code: string }): Promise<LanRoom>
+    joinRoom(target: LanRoom & { code: string; device: LanDevice }): Promise<LanRoom>
     send(payload: string): Promise<boolean>
     stop(): Promise<boolean>
     onEvent(callback: (event: LanEvent) => void): () => void

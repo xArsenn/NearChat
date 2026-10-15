@@ -21,6 +21,32 @@ let roomInfo = null
 let roomPeers = new Set()
 let roomAdvertiser = null
 let joinedSocket = null
+let localDevice = null
+
+function cleanDevice(device = {}, fallbackName = '匿名设备') {
+  return {
+    id: String(device.id || crypto.randomBytes(16).toString('hex')).slice(0, 64),
+    name: String(device.name || fallbackName).slice(0, 40),
+    fingerprint: String(device.fingerprint || '').slice(0, 80),
+  }
+}
+
+function currentMembers() {
+  const members = localDevice ? [{ ...localDevice, role: 'host' }] : []
+  for (const peer of roomPeers) {
+    if (peer.nearChatDevice) members.push({ ...peer.nearChatDevice, role: 'guest' })
+  }
+  return members
+}
+
+function publishMembers() {
+  const members = currentMembers()
+  emit('members', { members })
+  const message = JSON.stringify({ type: 'members', members })
+  for (const peer of roomPeers) {
+    if (peer.readyState === WebSocket.OPEN) peer.send(message)
+  }
+}
 
 function emit(channel, payload = {}) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('lan:event', { channel, ...payload })
@@ -105,6 +131,7 @@ function stopNetworking() {
     joinedSocket = null
   }
   roomInfo = null
+  localDevice = null
 }
 
 function advertiseRoom(info) {
@@ -133,15 +160,17 @@ ipcMain.handle('lan:start-room', async (_event, options = {}) => {
   const code = makeCode()
   const roomId = crypto.randomBytes(12).toString('hex')
   const name = String(options.name || 'NearChat 房间').slice(0, 40)
+  localDevice = cleanDevice(options.device, '房主')
 
   return await new Promise((resolve, reject) => {
     const server = new WebSocketServer({ host: '0.0.0.0', port: 0 })
     roomServer = server
     server.on('listening', () => {
       const port = server.address().port
-      roomInfo = { roomId, name, address, port, code }
+      roomInfo = { roomId, name, address, port, code, owner: localDevice }
       advertiseRoom(roomInfo)
       emit('connected', { role: 'host', room: roomInfo, peers: 1 })
+      publishMembers()
       resolve(roomInfo)
     })
     server.on('error', (error) => {
@@ -162,9 +191,11 @@ ipcMain.handle('lan:start-room', async (_event, options = {}) => {
             }
             authenticated = true
             clearTimeout(timer)
+            socket.nearChatDevice = cleanDevice(hello.device)
             roomPeers.add(socket)
-            socket.send(JSON.stringify({ type: 'auth-ok', room: roomInfo }))
+            socket.send(JSON.stringify({ type: 'auth-ok', room: roomInfo, members: currentMembers() }))
             emit('peer-count', { peers: roomPeers.size + 1 })
+            publishMembers()
           } catch {
             socket.close(4002, '无效请求')
           }
@@ -180,6 +211,7 @@ ipcMain.handle('lan:start-room', async (_event, options = {}) => {
         clearTimeout(timer)
         roomPeers.delete(socket)
         emit('peer-count', { peers: roomPeers.size + 1 })
+        publishMembers()
       })
     })
   })
@@ -208,6 +240,7 @@ ipcMain.handle('lan:discover', async () => {
 
 ipcMain.handle('lan:join-room', async (_event, target) => {
   stopNetworking()
+  localDevice = cleanDevice(target.device)
   return await new Promise((resolve, reject) => {
     const socket = new WebSocket(`ws://${target.address}:${Number(target.port)}`)
     joinedSocket = socket
@@ -215,7 +248,7 @@ ipcMain.handle('lan:join-room', async (_event, target) => {
       socket.close()
       reject(new Error('连接超时，请确认两台设备位于同一局域网'))
     }, 10000)
-    socket.on('open', () => socket.send(JSON.stringify({ type: 'hello', roomId: target.roomId, code: String(target.code || '').toUpperCase() })))
+    socket.on('open', () => socket.send(JSON.stringify({ type: 'hello', roomId: target.roomId, code: String(target.code || '').toUpperCase(), device: localDevice })))
     socket.on('message', (data) => {
       const payload = data.toString()
       try {
@@ -224,7 +257,13 @@ ipcMain.handle('lan:join-room', async (_event, target) => {
           clearTimeout(timeout)
           roomInfo = { ...control.room, code: String(target.code || '').toUpperCase() }
           emit('connected', { role: 'guest', room: roomInfo, peers: 2 })
+          emit('members', { members: control.members || [] })
           resolve(roomInfo)
+          return
+        }
+        if (control.type === 'members') {
+          emit('members', { members: control.members || [] })
+          emit('peer-count', { peers: (control.members || []).length })
           return
         }
         if (control.type === 'auth-error') {

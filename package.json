@@ -1,7 +1,7 @@
 {
   "name": "nearchat",
   "private": true,
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "无需账号与中心服务器的局域网点对点聊天工具",
   "author": "NearChat contributors",
   "repository": {
@@ -19,17 +19,19 @@
     "package:release": "npm run build && electron-builder --win nsis --config electron-builder.release.yml"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
+    "lucide-react": "latest",
+    "qrcode": "^1.5.4",
     "react": "latest",
     "react-dom": "latest",
-    "lucide-react": "latest",
-    "ws": "latest",
-    "electron-updater": "^6.8.9"
+    "ws": "latest"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "latest",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@types/ws": "latest",
+    "@vitejs/plugin-react": "latest",
     "electron": "latest",
     "electron-builder": "latest",
     "typescript": "latest",
