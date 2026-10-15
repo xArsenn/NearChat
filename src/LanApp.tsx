@@ -15,6 +15,7 @@ import {
   LockKeyhole,
   MessageCircle,
   Paperclip,
+  Pencil,
   Plus,
   QrCode,
   Radio,
@@ -34,6 +35,7 @@ type ChatItem = {
   kind: 'chat' | 'file' | 'system'
   side: 'me' | 'peer' | 'system'
   sender: string
+  senderId?: string
   text?: string
   name?: string
   size?: number
@@ -45,7 +47,7 @@ type ChatItem = {
 }
 
 type WirePacket =
-  | { kind: 'chat'; id: string; sender: string; text: string; createdAt: number }
+  | { kind: 'chat'; id: string; sender: string; senderId?: string; text: string; createdAt: number }
   | { kind: 'file-meta'; id: string; sender: string; senderId?: string; name: string; size: number; mime: string; chunks: number; hash?: string; createdAt: number }
   | { kind: 'file-chunk'; id: string; index: number; data: string }
   | { kind: 'file-ack'; id: string; senderId: string; ok: boolean }
@@ -65,6 +67,7 @@ const CHAT_KEY = 'nearchat.lan.messages.v1'
 const PROFILE_KEY = 'nearchat.lan.name.v1'
 const DEVICE_KEY = 'nearchat.device.id.v1'
 const TRUST_KEY = 'nearchat.trusted.devices.v1'
+const REMARK_KEY = 'nearchat.device.remarks.v1'
 
 function persistentDeviceId() {
   const stored = localStorage.getItem(DEVICE_KEY)
@@ -80,6 +83,10 @@ function deviceFingerprint(deviceId: string) {
 
 function loadTrustedIds() {
   try { return JSON.parse(localStorage.getItem(TRUST_KEY) || '[]') as string[] } catch { return [] }
+}
+
+function loadRemarks() {
+  try { return JSON.parse(localStorage.getItem(REMARK_KEY) || '{}') as Record<string, string> } catch { return {} }
 }
 
 function id() { return crypto.randomUUID() }
@@ -182,6 +189,9 @@ export default function LanApp() {
   const [displayName, setDisplayName] = useState(localStorage.getItem(PROFILE_KEY) || getText(language, 'device', { number: Math.floor(1000 + Math.random() * 9000) }))
   const [deviceId] = useState(persistentDeviceId)
   const [trustedIds, setTrustedIds] = useState<string[]>(loadTrustedIds)
+  const [remarks, setRemarks] = useState<Record<string, string>>(loadRemarks)
+  const [remarkMember, setRemarkMember] = useState<LanDevice | null>(null)
+  const [remarkDraft, setRemarkDraft] = useState('')
   const [members, setMembers] = useState<LanDevice[]>([])
   const [messages, setMessages] = useState<ChatItem[]>(loadMessages)
   const [draft, setDraft] = useState('')
@@ -189,7 +199,7 @@ export default function LanApp() {
   const [role, setRole] = useState<'host' | 'guest' | null>(null)
   const [room, setRoom] = useState<LanRoom | null>(null)
   const [peers, setPeers] = useState(1)
-  const [modal, setModal] = useState<'closed' | 'menu' | 'created' | 'join'>('closed')
+  const [modal, setModal] = useState<'closed' | 'menu' | 'created' | 'join' | 'remark'>('closed')
   const [roomName, setRoomName] = useState(getText(language, 'temporaryRoom'))
   const [nearby, setNearby] = useState<LanRoom[]>([])
   const [selectedRoom, setSelectedRoom] = useState<LanRoom | null>(null)
@@ -274,7 +284,7 @@ export default function LanApp() {
     }
     if (packet.kind === 'file-meta') {
       incomingRef.current.set(packet.id, { ...packet, parts: new Map() })
-      setMessages((items) => [...items.filter((item) => item.id !== packet.id), { id: packet.id, kind: 'file', side: 'peer', sender: packet.sender, name: packet.name, size: packet.size, hash: packet.hash, status: 'sending', progress: 0, createdAt: packet.createdAt }])
+      setMessages((items) => [...items.filter((item) => item.id !== packet.id), { id: packet.id, kind: 'file', side: 'peer', sender: packet.sender, senderId: packet.senderId, name: packet.name, size: packet.size, hash: packet.hash, status: 'sending', progress: 0, createdAt: packet.createdAt }])
       return
     }
     const transfer = incomingRef.current.get(packet.id)
@@ -388,7 +398,7 @@ export default function LanApp() {
     event.preventDefault()
     const text = draft.trim()
     if (!text || !connected) return
-    const packet: WirePacket = { kind: 'chat', id: id(), sender: displayName, text, createdAt: Date.now() }
+    const packet: WirePacket = { kind: 'chat', id: id(), sender: displayName, senderId: deviceId, text, createdAt: Date.now() }
     try {
       await sendWire(packet)
       setMessages((items) => [...items, { ...packet, side: 'me' }])
@@ -412,7 +422,7 @@ export default function LanApp() {
   async function transmitFile(file: File, transferId: string, createdAt: number) {
     const chunkSize = 48 * 1024
     const total = Math.ceil(file.size / chunkSize)
-    setMessages((items) => [...items.filter((item) => item.id !== transferId), { id: transferId, kind: 'file', side: 'me', sender: displayName, name: file.name, size: file.size, status: 'sending', progress: 0, createdAt }])
+    setMessages((items) => [...items.filter((item) => item.id !== transferId), { id: transferId, kind: 'file', side: 'me', sender: displayName, senderId: deviceId, name: file.name, size: file.size, status: 'sending', progress: 0, createdAt }])
     try {
       const hash = await sha256(await file.arrayBuffer())
       setMessages((items) => items.map((item) => item.id === transferId ? { ...item, hash } : item))
@@ -447,6 +457,45 @@ export default function LanApp() {
       localStorage.setItem(TRUST_KEY, JSON.stringify(next))
       return next
     })
+  }
+
+  function displaySender(sender: string, senderId?: string) {
+    return senderId && remarks[senderId]?.trim() ? remarks[senderId].trim() : sender
+  }
+
+  function openRemark(member: LanDevice) {
+    if (member.id === deviceId) return
+    setRemarkMember(member)
+    setRemarkDraft(remarks[member.id] || '')
+    setNotice('')
+    setModal('remark')
+  }
+
+  function saveRemark() {
+    if (!remarkMember) return
+    const value = remarkDraft.trim().slice(0, 40)
+    setRemarks((current) => {
+      const next = { ...current }
+      if (value) next[remarkMember.id] = value
+      else delete next[remarkMember.id]
+      localStorage.setItem(REMARK_KEY, JSON.stringify(next))
+      return next
+    })
+    setModal('closed')
+    setNotice(value ? t('remarkSaved') : t('remarkRemoved'))
+  }
+
+  function removeRemark() {
+    setRemarkDraft('')
+    if (!remarkMember) return
+    setRemarks((current) => {
+      const next = { ...current }
+      delete next[remarkMember.id]
+      localStorage.setItem(REMARK_KEY, JSON.stringify(next))
+      return next
+    })
+    setModal('closed')
+    setNotice(t('remarkRemoved'))
   }
 
   async function pasteInvite() {
@@ -516,9 +565,12 @@ export default function LanApp() {
           <div className="section-label members-label">{t('roomMembers')}</div>
           <div className="members-list">{members.map((member) => {
             const trusted = member.id === deviceId || trustedIds.includes(member.id)
-            return <button key={member.id} onClick={() => toggleTrust(member)} title={`${member.fingerprint}${member.id === deviceId ? ` · ${t('currentDevice')}` : trusted ? ` · ${t('cancelTrust')}` : ` · ${t('trustDevice')}`}`}>
+            const remark = remarks[member.id]?.trim()
+            const status = member.id === deviceId ? `${member.role === 'host' ? `${t('host')} · ` : ''}${t('currentDevice')}` : member.role === 'host' ? t('host') : trusted ? t('trustedDevice') : t('newDevice')
+            return <button key={member.id} className={member.id === deviceId ? 'self' : ''} onClick={() => openRemark(member)} title={member.id === deviceId ? `${member.fingerprint} · ${t('currentDevice')}` : `${t('setRemark')} · ${member.fingerprint}`}>
               <span className={`member-icon ${trusted ? 'trusted' : ''}`}>{trusted ? <UserRoundCheck size={15} /> : <Fingerprint size={15} />}</span>
-              <span><strong>{member.name}</strong><small>{member.id === deviceId ? `${member.role === 'host' ? `${t('host')} · ` : ''}${t('currentDevice')}` : member.role === 'host' ? t('host') : trusted ? t('trustedDevice') : t('newDevice')}</small></span>
+              <span><strong>{remark || member.name}</strong><small>{remark ? `${member.name} · ${status}` : status}</small></span>
+              {member.id !== deviceId && <Pencil className="member-edit" size={12} />}
             </button>
           })}</div>
         </>}
@@ -544,7 +596,7 @@ export default function LanApp() {
             <div className={`message-row ${item.side}`} key={item.id}>
               <div className={`bubble ${item.kind === 'file' ? 'file-bubble' : ''}`}>
                 {item.kind === 'chat' ? <p>{item.text}</p> : <div className={`file-card ${item.status || ''}`}><FileUp size={23} /><div><strong>{item.name}</strong><span>{formatSize(item.size)} · {fileStatus(item, language)}</span><div className="file-progress"><i style={{ width: `${item.progress || 0}%` }} /></div></div>{item.url ? <a href={item.url} download={item.name} title={t('saveFile')}><Download size={18} /></a> : item.side === 'me' && item.status === 'failed' ? <button onClick={() => retryFile(item.id)} title={t('retry')}><RotateCcw size={17} /></button> : null}</div>}
-                <time>{item.sender} · {new Date(item.createdAt).toLocaleTimeString(language === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</time>
+                <time><strong>{displaySender(item.sender, item.senderId)}</strong> · {new Date(item.createdAt).toLocaleTimeString(language === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</time>
               </div>
             </div>
           ))}
@@ -590,6 +642,14 @@ export default function LanApp() {
               {!selectedRoom && <button className="text-button advanced-toggle" onClick={() => { setAdvancedJoin((value) => !value); setJoinAttempted(false); setNotice('') }}>{advancedJoin ? t('collapseAdvanced') : t('showAdvanced')}</button>}
               {!selectedRoom && advancedJoin && <div className="advanced-fields"><div className="input-grid"><div><label>{t('hostAddress')} <em>{t('required')}</em></label><input ref={addressInputRef} className={`modal-input ${joinAttempted && !manualAddress.trim() ? 'invalid' : ''}`} aria-invalid={joinAttempted && !manualAddress.trim()} placeholder={t('addressExample')} value={manualAddress} onChange={(event) => changeManualAddress(event.target.value)} /></div><div><label>{t('port')} <em>{t('required')}</em></label><input ref={portInputRef} className={`modal-input ${joinAttempted && manualPortInvalid ? 'invalid' : ''}`} aria-invalid={joinAttempted && manualPortInvalid} inputMode="numeric" placeholder={t('portExample')} value={manualPort} onChange={(event) => setManualPort(event.target.value.replace(/\D/g, '').slice(0, 5))} /></div></div><p className="field-help">{t('advancedHelp')}</p></div>}
               <button className="primary wide" disabled={busy} onClick={joinRoom}>{busy ? <LoaderCircle className="spin" size={17} /> : <Link2 size={17} />} {!selectedRoom && !advancedJoin ? t('autoFindJoin') : t('joinRoom')}</button>
+            </>}
+            {modal === 'remark' && remarkMember && <>
+              <div className="modal-icon"><Pencil size={23} /></div><h2>{t('remarkTitle')}</h2><p className="modal-intro">{t('remarkIntro')}</p>
+              <div className="member-identity"><span>{t('originalName')} <strong>{remarkMember.name}</strong></span><span>{t('deviceFingerprint')} <code>{remarkMember.fingerprint}</code></span></div>
+              <label>{t('remarkName')}</label><input className="modal-input" autoFocus maxLength={40} placeholder={t('remarkPlaceholder')} value={remarkDraft} onChange={(event) => setRemarkDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') saveRemark() }} />
+              <button className="primary wide" onClick={saveRemark}><Pencil size={16} /> {t('saveRemark')}</button>
+              <button className="secondary wide" onClick={() => toggleTrust(remarkMember)}><ShieldCheck size={16} /> {trustedIds.includes(remarkMember.id) ? t('cancelTrust') : t('trustDevice')}</button>
+              {remarks[remarkMember.id] && <button className="text-button remove-remark" onClick={removeRemark}>{t('removeRemark')}</button>}
             </>}
             {notice && <div className="notice">{notice}</div>}
           </section>

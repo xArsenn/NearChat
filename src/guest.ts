@@ -207,7 +207,7 @@ async function sendChat() {
   const draft = $('draft') as HTMLInputElement
   const value = draft.value.trim()
   if (!value || !connected) return
-  const packet: Packet = { kind: 'chat', id: bytesToHex(randomBytes(16)), sender: guestName, text: value, createdAt: Date.now() }
+  const packet: Packet = { kind: 'chat', id: bytesToHex(randomBytes(16)), sender: guestName, senderId: deviceId, text: value, createdAt: Date.now() }
   socket?.send(await encrypt(packet))
   addMessage(packet, true)
   draft.value = ''

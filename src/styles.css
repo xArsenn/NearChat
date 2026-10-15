@@ -43,10 +43,13 @@ button { color: inherit; }
 .members-list { display: grid; gap: 5px; max-height: 170px; overflow-y: auto; padding-right: 2px; }
 .members-list > button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 9px; color: #a9b4af; background: transparent; border: 1px solid transparent; border-radius: 9px; text-align: left; cursor: pointer; }
 .members-list > button:hover { background: #12191b; border-color: var(--line); }
-.members-list > button > span:last-child { min-width: 0; flex: 1; }
+.members-list > button > span:nth-child(2) { min-width: 0; flex: 1; }
 .members-list strong, .members-list small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .members-list strong { font-size: 11px; }
 .members-list small { margin-top: 2px; color: #64716b; font-size: 9px; }
+.members-list > button.self { cursor: default; }
+.member-edit { flex: 0 0 auto; color: #596760; opacity: 0; transition: opacity .15s, color .15s; }
+.members-list > button:hover .member-edit { color: var(--green); opacity: 1; }
 .member-icon { width: 29px; height: 29px; display: grid; place-items: center; color: #728078; background: #161e20; border-radius: 8px; }
 .member-icon.trusted { color: var(--green); background: rgba(113,230,176,.09); }
 .update-button { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 9px 11px; color: #899790; background: transparent; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; font-size: 10px; }
@@ -89,6 +92,7 @@ button { color: inherit; }
 .message-row.me .bubble { background: #1c4b38; border-color: rgba(113,230,176,.12); border-radius: 15px 5px 15px 15px; }
 .bubble p { margin: 0; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .bubble time { display: block; margin-top: 4px; color: #789087; font-size: 9px; text-align: right; }
+.bubble time strong { color: #a7b6af; font-weight: 700; }
 .composer { display: flex; gap: 10px; padding: 14px clamp(22px, 7vw, 100px) 20px; border-top: 1px solid var(--line); background: rgba(8,11,13,.82); }
 .hidden-file { display: none !important; }
 .composer input { min-width: 0; flex: 1; padding: 13px 15px; color: #e8efeb; background: #11171a; border: 1px solid var(--line); border-radius: 12px; outline: none; }
@@ -138,6 +142,11 @@ button { color: inherit; }
 .field-help { margin: 7px 1px 0; color: #66736d; font-size: 9px; line-height: 1.5; }
 .advanced-toggle { margin-top: 14px; }
 .advanced-fields { margin-top: 2px; padding: 0 12px 12px; background: rgba(255,255,255,.018); border: 1px solid var(--line); border-radius: 11px; }
+.member-identity { display: grid; gap: 7px; padding: 12px; color: #7d8a84; background: #0b1012; border: 1px solid var(--line); border-radius: 10px; font-size: 10px; }
+.member-identity span { display: flex; justify-content: space-between; gap: 12px; }
+.member-identity strong { color: #d7e0db; }
+.member-identity code { color: #8aa397; }
+.remove-remark { color: #d98b8e; }
 .modal-input.mono, .code-input { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 .code-input { text-transform: uppercase; letter-spacing: .18em; font-weight: 700; }
 .input-grid { display: grid; grid-template-columns: 1fr 110px; gap: 10px; }

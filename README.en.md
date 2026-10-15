@@ -16,6 +16,7 @@ The computer that creates a room temporarily acts as the host on the local netwo
 - Manual address and port available only as an advanced fallback
 - Multi-user local chat and a live member list
 - Device fingerprints and local trusted-device labels
+- Private local names shown on member entries, messages, and files
 - Direct file transfers up to 50 MB
 - Live progress, retry, saving, and SHA-256 integrity verification
 - AES-256-GCM application-layer encryption
