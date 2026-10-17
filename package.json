@@ -1,7 +1,7 @@
 {
   "name": "nearchat",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Bilingual serverless LAN chat and file collaboration with no-install phone guests",
   "author": "NearChat contributors",
   "repository": {

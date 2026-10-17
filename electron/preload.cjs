@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld('nearChat', {
   finishFileReceive: (id, hash) => ipcRenderer.invoke('file:finish-receive', id, hash),
   abortFileReceive: (id) => ipcRenderer.invoke('file:abort-receive', id),
   showInFolder: (filePath) => ipcRenderer.invoke('file:show-in-folder', filePath),
+  getPreferences: () => ipcRenderer.invoke('app:get-preferences'),
+  setLaunchAtLogin: (enabled) => ipcRenderer.invoke('app:set-launch-at-login', enabled),
+  setLocale: (locale) => ipcRenderer.invoke('app:set-locale', locale),
+  notify: (options) => ipcRenderer.invoke('app:notify', options),
   onEvent: (callback) => {
     const listener = (_event, data) => callback(data)
     ipcRenderer.on('lan:event', listener)

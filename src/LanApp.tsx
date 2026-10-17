@@ -26,6 +26,7 @@ import {
   RefreshCw,
   RotateCcw,
   Send,
+  Settings,
   ShieldCheck,
   Unplug,
   UserRoundCheck,
@@ -61,6 +62,7 @@ type WirePacket =
   | { kind: 'file-ack'; id: string; senderId: string; ok: boolean }
 
 type IncomingFile = {
+  senderId?: string
   sender: string
   name: string
   size: number
@@ -205,6 +207,8 @@ export default function LanApp() {
   const incomingRef = useRef(new Map<string, IncomingFile>())
   const outgoingRef = useRef(new Map<string, File>())
   const receiveQueueRef = useRef(Promise.resolve())
+  const receiveDecisionRef = useRef<((accepted: boolean) => void) | null>(null)
+  const trustedIdsRef = useRef<string[]>([])
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const folderInputRef = useRef<HTMLInputElement | null>(null)
@@ -226,7 +230,9 @@ export default function LanApp() {
   const [role, setRole] = useState<'host' | 'guest' | null>(null)
   const [room, setRoom] = useState<LanRoom | null>(null)
   const [peers, setPeers] = useState(1)
-  const [modal, setModal] = useState<'closed' | 'menu' | 'created' | 'join' | 'remark' | 'clipboard' | 'inbox'>('closed')
+  const [modal, setModal] = useState<'closed' | 'menu' | 'created' | 'join' | 'remark' | 'clipboard' | 'inbox' | 'settings' | 'receive'>('closed')
+  const [pendingReceive, setPendingReceive] = useState<Extract<WirePacket, { kind: 'file-meta' }> | null>(null)
+  const [launchAtLogin, setLaunchAtLogin] = useState(false)
   const [clipboardDraft, setClipboardDraft] = useState('')
   const [dragging, setDragging] = useState(false)
   const [roomName, setRoomName] = useState(getText(language, 'temporaryRoom'))
@@ -251,7 +257,14 @@ export default function LanApp() {
   useEffect(() => {
     localStorage.setItem('nearchat.language', language)
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en'
+    api.setLocale(language)
   }, [language])
+
+  useEffect(() => { trustedIdsRef.current = trustedIds }, [trustedIds])
+
+  useEffect(() => {
+    api.getPreferences().then((preferences) => setLaunchAtLogin(preferences.launchAtLogin)).catch(() => {})
+  }, [])
 
   useEffect(() => {
     const unsubscribe = api.onEvent(async (event) => {
@@ -305,6 +318,7 @@ export default function LanApp() {
     if ('targets' in packet && packet.targets?.length && !packet.targets.includes(deviceId)) return
     if (packet.kind === 'chat' || packet.kind === 'clipboard') {
       setMessages((items) => [...items, { ...packet, side: 'peer' }])
+      if (document.hidden) await api.notify({ title: displaySender(packet.sender, packet.senderId), body: packet.kind === 'chat' ? packet.text : t('clipboardReceived') })
       return
     }
     if (packet.kind === 'file-ack') {
@@ -312,6 +326,11 @@ export default function LanApp() {
       return
     }
     if (packet.kind === 'file-meta') {
+      const trusted = Boolean(packet.senderId && trustedIdsRef.current.includes(packet.senderId))
+      if (!trusted && !(await requestFileReceive(packet))) {
+        await sendWire({ kind: 'file-ack', id: packet.id, senderId: deviceId, ok: false })
+        return
+      }
       await api.beginFileReceive({ id: packet.id, name: packet.name, size: packet.size })
       incomingRef.current.set(packet.id, { ...packet, receivedChunks: 0, receivedBytes: 0, startedAt: performance.now() })
       setMessages((items) => [...items.filter((item) => item.id !== packet.id), { id: packet.id, kind: 'file', side: 'peer', sender: packet.sender, senderId: packet.senderId, name: packet.name, size: packet.size, hash: packet.hash, status: 'sending', progress: 0, createdAt: packet.createdAt }])
@@ -331,8 +350,44 @@ export default function LanApp() {
       const result = await api.finishFileReceive(packet.id, transfer.hash)
       setMessages((items) => items.map((item) => item.id === packet.id ? { ...item, progress: 100, status: result.ok ? 'complete' : 'corrupt', savedPath: result.path, eta: 0 } : item))
       await sendWire({ kind: 'file-ack', id: packet.id, senderId: deviceId, ok: result.ok })
+      await api.notify({ title: result.ok ? t('receiveComplete') : t('receiveFailed'), body: `${transfer.name} · ${displaySender(transfer.sender, transfer.senderId)}` })
       incomingRef.current.delete(packet.id)
     }
+  }
+
+  function requestFileReceive(packet: Extract<WirePacket, { kind: 'file-meta' }>) {
+    setPendingReceive(packet)
+    setModal('receive')
+    api.notify({ title: t('incomingFile'), body: `${displaySender(packet.sender, packet.senderId)} · ${packet.name} · ${formatSize(packet.size)}` })
+    return new Promise<boolean>((resolve) => { receiveDecisionRef.current = resolve })
+  }
+
+  function decideFileReceive(accepted: boolean, trust = false) {
+    if (trust && pendingReceive?.senderId) {
+      setTrustedIds((current) => {
+        const next = current.includes(pendingReceive.senderId!) ? current : [...current, pendingReceive.senderId!]
+        localStorage.setItem(TRUST_KEY, JSON.stringify(next))
+        trustedIdsRef.current = next
+        return next
+      })
+    }
+    receiveDecisionRef.current?.(accepted)
+    receiveDecisionRef.current = null
+    setPendingReceive(null)
+    setModal('closed')
+  }
+
+  function closeModal() {
+    if (modal === 'receive') decideFileReceive(false)
+    else setModal('closed')
+  }
+
+  async function toggleLaunchAtLogin() {
+    try {
+      const enabled = await api.setLaunchAtLogin(!launchAtLogin)
+      setLaunchAtLogin(enabled)
+      setNotice(enabled ? t('launchEnabled') : t('launchDisabled'))
+    } catch { setNotice(t('preferenceFailed')) }
   }
 
   async function sendWire(packet: WirePacket) {
@@ -670,6 +725,7 @@ export default function LanApp() {
           <div className="avatar large"><Radio size={21} /></div>
           <div className="header-copy"><strong>{room?.name || t('hostFallback')}</strong><span><Users size={12} /> {connected ? t('onlineDevices', { count: peers, address: `${room?.address}:${room?.port}` }) : t('notConnected')}</span></div>
           <button className="language-switch" title={t('languageTitle')} onClick={() => setLanguage((value) => value === 'zh' ? 'en' : 'zh')}>{t('languageName')}</button>
+          <button className="icon-button tool-button" title={t('settings')} onClick={() => { setNotice(''); setModal('settings') }}><Settings size={18} /></button>
           {connected && <button className="icon-button tool-button" title={t('sharedClipboard')} onClick={openClipboard}><ClipboardPaste size={18} /></button>}
           {connected && <button className="icon-button tool-button" title={t('fileInbox')} onClick={() => { setNotice(''); setModal('inbox') }}><FolderOpen size={18} /></button>}
           {connected && role === 'host' && <button className="icon-button invite-button" title={t('showQr')} onClick={() => setModal('created')}><QrCode size={18} /></button>}
@@ -705,7 +761,7 @@ export default function LanApp() {
       {modal !== 'closed' && (
         <div className="modal-backdrop">
           <section className="pair-modal lan-modal">
-            <button className="modal-close" onClick={() => setModal('closed')}><X size={19} /></button>
+            <button className="modal-close" onClick={closeModal}><X size={19} /></button>
             {modal === 'menu' && <>
               <div className="modal-icon"><Wifi size={24} /></div><h2>{t('lanConnect')}</h2><p className="modal-intro">{t('lanIntro')}</p>
               <label>{t('myName')}</label><input className="modal-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
@@ -752,6 +808,19 @@ export default function LanApp() {
             {modal === 'inbox' && <>
               <div className="modal-icon"><FolderOpen size={23} /></div><h2>{t('fileInbox')}</h2><p className="modal-intro">{t('fileInboxIntro')}</p>
               <div className="inbox-list">{messages.filter((item) => item.kind === 'file').length ? messages.filter((item) => item.kind === 'file').slice().reverse().map((item) => <div className="inbox-item" key={item.id}><FileUp size={18} /><div><strong>{item.name}</strong><span>{displaySender(item.sender, item.senderId)} · {formatSize(item.size)} · {fileStatus(item, language)}</span></div>{item.savedPath ? <button onClick={() => api.showInFolder(item.savedPath!)} title={t('showInFolder')}><FolderOpen size={17} /></button> : item.url ? <a href={item.url} download={item.name} title={t('saveFile')}><Download size={17} /></a> : <span className={`inbox-state ${item.status || ''}`} />}</div>) : <div className="inbox-empty">{t('fileInboxEmpty')}</div>}</div>
+            </>}
+            {modal === 'settings' && <>
+              <div className="modal-icon"><Settings size={23} /></div><h2>{t('settings')}</h2><p className="modal-intro">{t('settingsIntro')}</p>
+              <button className="preference-row" onClick={toggleLaunchAtLogin}><span><strong>{t('launchAtLogin')}</strong><small>{t('launchAtLoginIntro')}</small></span><i className={launchAtLogin ? 'on' : ''} /></button>
+              <div className="preference-row static"><span><strong>{t('closeToTray')}</strong><small>{t('closeToTrayIntro')}</small></span><i className="on" /></div>
+              <p className="privacy-note"><ShieldCheck size={13} /> {t('backgroundPrivacy')}</p>
+            </>}
+            {modal === 'receive' && pendingReceive && <>
+              <div className="modal-icon"><Download size={23} /></div><h2>{t('incomingFile')}</h2><p className="modal-intro">{t('incomingFileIntro', { sender: displaySender(pendingReceive.sender, pendingReceive.senderId) })}</p>
+              <div className="incoming-file"><FileUp size={22} /><span><strong>{pendingReceive.name}</strong><small>{formatSize(pendingReceive.size)}</small></span></div>
+              <button className="primary wide" onClick={() => decideFileReceive(true)}><Download size={16} /> {t('acceptOnce')}</button>
+              {pendingReceive.senderId && <button className="secondary wide" onClick={() => decideFileReceive(true, true)}><ShieldCheck size={16} /> {t('acceptAndTrust')}</button>}
+              <button className="text-button remove-remark" onClick={() => decideFileReceive(false)}>{t('reject')}</button>
             </>}
             {notice && <div className="notice">{notice}</div>}
           </section>

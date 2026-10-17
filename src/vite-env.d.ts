@@ -43,6 +43,10 @@ interface Window {
     finishFileReceive(id: string, hash?: string): Promise<{ ok: boolean; hash: string; path?: string }>
     abortFileReceive(id: string): Promise<boolean>
     showInFolder(filePath: string): Promise<boolean>
+    getPreferences(): Promise<{ launchAtLogin: boolean; closeToTray: boolean }>
+    setLaunchAtLogin(enabled: boolean): Promise<boolean>
+    setLocale(locale: 'zh' | 'en'): Promise<boolean>
+    notify(options: { title: string; body: string; silent?: boolean }): Promise<boolean>
     onEvent(callback: (event: LanEvent) => void): () => void
     checkForUpdates(): Promise<boolean>
     downloadUpdate(): Promise<boolean>

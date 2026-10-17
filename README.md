@@ -14,6 +14,8 @@ NearChat 是一个无需账号、无需云服务器的开源局域网协作工�
 - Windows 桌面端中英文切换
 - 局域网自动发现，无需手填地址和端口
 - 多人聊天、成员列表和可信设备标记
+- 陌生设备文件确认、可信设备自动接收
+- 系统托盘常驻、可选开机启动和原生通知
 - 为聊天对象设置仅自己可见的备注名称
 - 加密共享剪贴板：发送文字或剪贴板图片，接收后一键复制
 - 拖放文件到聊天窗口即可发送
@@ -36,6 +38,8 @@ Messages and files are encrypted with an AES-256-GCM key derived from the room c
 - Chinese and English desktop interface
 - Automatic LAN discovery with no address or port entry
 - Group chat, live member list, and trusted-device labels
+- File confirmation for new devices and automatic receiving from trusted devices
+- System-tray background mode, optional launch at login, and native notifications
 - Private local names for people and devices
 - Encrypted shared clipboard for text and clipboard images
 - Drag-and-drop file sending

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, clipboard, ipcMain, shell, Tray, Menu, Notification, nativeImage } = require('electron')
 const path = require('path')
 const os = require('os')
 const crypto = require('crypto')
@@ -18,6 +18,8 @@ for (const stream of [process.stdout, process.stderr]) {
 
 const DISCOVERY_PORT = 41234
 let mainWindow = null
+let tray = null
+let isQuitting = false
 let roomServer = null
 let roomHttpServer = null
 let roomInfo = null
@@ -30,6 +32,33 @@ const incomingFiles = new Map()
 
 function localized(zh, en, locale = appLocale) {
   return locale === 'en' ? en : zh
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow()
+  mainWindow.show()
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.focus()
+}
+
+function updateTrayMenu() {
+  if (!tray) return
+  tray.setToolTip(localized('NearChat · 局域网协作', 'NearChat · Local collaboration'))
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: localized('打开 NearChat', 'Open NearChat'), click: showMainWindow },
+    { label: localized('打开接收文件夹', 'Open received files'), click: () => shell.openPath(path.join(app.getPath('downloads'), 'NearChat')) },
+    { type: 'separator' },
+    { label: localized('退出', 'Quit'), click: () => { isQuitting = true; app.quit() } },
+  ]))
+}
+
+function createTray() {
+  if (tray) return
+  const iconPath = path.join(__dirname, '..', 'dist', 'icon.svg')
+  const icon = nativeImage.createFromPath(iconPath).resize({ width: 20, height: 20 })
+  tray = new Tray(icon)
+  tray.on('click', showMainWindow)
+  updateTrayMenu()
 }
 
 function cleanDevice(device = {}, fallbackName = localized('匿名设备', 'Anonymous device')) {
@@ -165,6 +194,34 @@ ipcMain.handle('file:abort-receive', async (_event, transferId) => {
 
 ipcMain.handle('file:show-in-folder', (_event, filePath) => {
   shell.showItemInFolder(String(filePath || ''))
+  return true
+})
+
+ipcMain.handle('app:get-preferences', () => ({
+  launchAtLogin: app.getLoginItemSettings().openAtLogin,
+  closeToTray: true,
+}))
+
+ipcMain.handle('app:set-launch-at-login', (_event, enabled) => {
+  app.setLoginItemSettings({ openAtLogin: Boolean(enabled), path: process.execPath })
+  return app.getLoginItemSettings().openAtLogin
+})
+
+ipcMain.handle('app:set-locale', (_event, locale) => {
+  appLocale = locale === 'en' ? 'en' : 'zh'
+  updateTrayMenu()
+  return true
+})
+
+ipcMain.handle('app:notify', (_event, options = {}) => {
+  if (!Notification.isSupported()) return false
+  const notification = new Notification({
+    title: String(options.title || 'NearChat').slice(0, 80),
+    body: String(options.body || '').slice(0, 240),
+    silent: Boolean(options.silent),
+  })
+  notification.on('click', showMainWindow)
+  notification.show()
   return true
 })
 
@@ -473,6 +530,12 @@ function createWindow() {
 
   mainWindow = window
 
+  window.on('close', (event) => {
+    if (isQuitting) return
+    event.preventDefault()
+    window.hide()
+  })
+
   window.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) shell.openExternal(url)
@@ -482,14 +545,17 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow()
+  createTray()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
 
 app.on('window-all-closed', () => {
+  // NearChat stays available in the tray so active rooms and transfers continue.
+})
+
+app.on('before-quit', () => {
+  isQuitting = true
   stopNetworking()
-  for (const transfer of incomingFiles.values()) fs.promises.unlink(transfer.tempPath).catch(() => {})
-  incomingFiles.clear()
-  if (process.platform !== 'darwin') app.quit()
 })

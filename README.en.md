@@ -4,7 +4,7 @@
 
 NearChat is an open-source local chat and file collaboration tool that requires no account and no cloud server.
 
-The computer that creates a room temporarily acts as the host on the local network. Other computers can discover the room automatically. Phones can scan the QR code and join directly from a browser without downloading or installing NearChat. The temporary web service and all room connections stop as soon as the host closes the room.
+The computer that creates a room temporarily acts as the host on the local network. Other computers can discover the room automatically. Phones can scan the QR code and join directly from a browser without downloading or installing NearChat. Quitting NearChat stops the temporary web service and room connections; closing the window keeps them available from the system tray.
 
 ## Features
 
@@ -16,6 +16,9 @@ The computer that creates a room temporarily acts as the host on the local netwo
 - Manual address and port available only as an advanced fallback
 - Multi-user local chat and a live member list
 - Device fingerprints and local trusted-device labels
+- Confirmation before receiving from new devices, with automatic receiving for trusted devices
+- System-tray background mode so closing the window does not interrupt rooms or transfers
+- Optional launch at login plus native notifications for messages and file transfers
 - Private local names shown on member entries, messages, and files
 - Encrypted shared clipboard for text and clipboard images, with one-click copy
 - Drag files into the chat to send up to 20 at a time
@@ -35,6 +38,7 @@ The computer that creates a room temporarily acts as the host on the local netwo
 5. Use the clipboard button to send text or a screenshot. Drag files into the chat, or use the folder button to select an entire folder.
 6. If discovery is blocked, read a one-tap invite. Use the advanced address and port fields only as a fallback.
 7. When Windows asks for network access, allow NearChat on private networks.
+8. Optionally enable launch at login in Settings. To stop NearChat completely, choose Quit from its system-tray menu.
 
 The shared clipboard is read only after a user clicks. NearChat never syncs passwords, verification codes, or other clipboard content in the background.
 
