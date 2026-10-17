@@ -203,7 +203,8 @@ ipcMain.handle('app:get-preferences', () => ({
 }))
 
 ipcMain.handle('app:set-launch-at-login', (_event, enabled) => {
-  app.setLoginItemSettings({ openAtLogin: Boolean(enabled), path: process.execPath })
+  const args = app.isPackaged ? ['--hidden'] : [path.resolve(__dirname, '..'), '--hidden']
+  app.setLoginItemSettings({ openAtLogin: Boolean(enabled), path: process.execPath, args })
   return app.getLoginItemSettings().openAtLogin
 })
 
@@ -512,6 +513,7 @@ ipcMain.handle('lan:stop', async () => {
 })
 
 function createWindow() {
+  const startHidden = process.argv.includes('--hidden')
   const window = new BrowserWindow({
     width: 1180,
     height: 760,
@@ -520,6 +522,7 @@ function createWindow() {
     backgroundColor: '#080b0d',
     autoHideMenuBar: true,
     title: 'NearChat',
+    show: !startHidden,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
